@@ -1,0 +1,28 @@
+<cbil>
+    <CloneProjects>
+        <project id="teb" profileid = "prof1">
+            <workingDirectory>testRepos/buildArea</workingDirectory>
+            <repoLocation>../teb</repoLocation>
+            <branch>CSH</branch>
+            <localRepoName>bob</localRepoName>
+        </project>
+        <project id="teb2bb" profileid = "prof1">
+            <workingDirectory>testRepos/buildArea</workingDirectory>
+            <repoLocation>../teb</repoLocation>
+            <branch>master</branch>
+            <localRepoName>bob2</localRepoName>
+        </project>
+    </CloneProjects>
+
+
+    <Needs>
+      <NeedsList id = "all" profileid = "prof1">
+        <need>teb</need>
+        <need>teb2bb</need>
+      </NeedsList>
+      <NeedsList id = "allx" profileid = "prof1">
+        <need>tebX</need>
+        <need>teb2bbX</need>
+      </NeedsList>
+    </Needs>
+</cbil>
