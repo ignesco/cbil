@@ -14,6 +14,34 @@
         </project>
     </CloneProjects>
 
+    <ProfileDefines>
+      <profile profileid="prof1">
+          <defines>
+              <define name="DatabaseName">XXDBNameXX</define>
+              <define name="WorkingDirectory">c:\Users\DBUpgradeScripts</define>
+          </defines>
+        </profile>
+    </ProfileDefines>
+
+    <DatabaseGroups>
+      <DatabaseGroup id="ab_baselinedb" profileid="prof1">
+        <WorkingDirectory>%WorkingDirectory%</WorkingDirectory>
+        <DatabaseName>%DatabaseName%</DatabaseName>
+        <Scripts>
+            <Script dname="master" dbdefinename="%DatabaseName%">DropDB.sql</Script>
+            <Script dname="master" dbdefinename="%DatabaseName%">RestoreBaseline.sql</Script>
+        </Scripts>
+      </DatabaseGroup>
+      <DatabaseGroup id="ab_allcp" profileid="prof1">
+        <WorkingDirectory>%WorkingDirectory%</WorkingDirectory>
+        <Scripts>
+            <Script dname="%DatabaseName%" dbdefinename="%DatabaseName%">LocalAppConfig.sql</Script>
+            <Script dname="%DatabaseName%" dbdefinename="%DatabaseName%">CP_0001.sql</Script>
+            <Script dname="%DatabaseName%" dbdefinename="%DatabaseName%">CP_0002.sql</Script>
+            <Script dname="%DatabaseName%" dbdefinename="%DatabaseName%">CP_0003.sql</Script>
+        </Scripts>
+      </DatabaseGroup>
+    </DatabaseGroups>
 
     <Needs>
       <NeedsList id = "all" profileid = "prof1">

@@ -15,7 +15,6 @@ main :: IO ()
 documentRoot :: String -> IOSLA (XIOState s) a XmlTree
 documentRoot xml = readDocument [] xml >>> getChildren >>> hasName "cbil"
 
-
 -- CloneProjects ----------------------
 
 type CloneProject = (String, String, String, String, String)
@@ -23,7 +22,6 @@ type CloneProject = (String, String, String, String, String)
 getCloneProjectTrees :: String -> IOSLA (XIOState s) a XmlTree
 getCloneProjectTrees xml = documentRoot xml >>> getChildren >>> hasName "CloneProjects" >>> getChildren >>> hasName "project"
     
-
 loadCloneProjects :: String -> IO [CloneProject]
 loadCloneProjects xmlFile = do
     trees <- runX (getCloneProjectTrees xmlFile)
@@ -73,15 +71,6 @@ loadNeeds xmlFile = do
     trees <- runX (getNeedsListTrees xmlFile)
     return $ concat $ map (runLA mapToCbilNeeds) trees
 
-{-
-mkCloneRule ::  -> Rules ()
-mkCloneRule (pid, nsl) = do
-    phony pid $ do
-        putNormal $ pid ++ "!!!"
-        command_ [Cwd wd] "git" ["clone", "--single-branch", "--branch", br, rloc, rname]
--}
-
-
 mkNeedsRule :: NeedsList -> Rules ()
 mkNeedsRule (pid, nl) = do
         phony pid $ do
@@ -97,16 +86,58 @@ initNeeds :: String -> FilePath -> Rules [String]
 initNeeds profile cbilxml = do
     needsList <- liftIO $ loadNeeds cbilxml
     mkNeedsRules needsList
+
+-- ProfileDefines --------------------
+
+type ProfileDefineList = Maybe [(String, String)]
+type ProfileDefine = (String, [(String, String)])
+type ProfileDefines = [ProfileDefine]
+
+getProfileDefinesTrees :: String -> IOSLA (XIOState s) a XmlTree
+getProfileDefinesTrees xml = documentRoot xml >>> getChildren >>> hasName "ProfileDefines" >>> getChildren >>> hasName "profile"
+
+loadProfileDefines :: String -> IO ProfileDefines
+loadProfileDefines xmlFile = do
+    trees <- runX (getProfileDefinesTrees xmlFile)
+    return $ concat $ map (runLA mapToCbilProfileDefines) trees
+
+mapToCbilProfileDefines :: ArrowXml t => t XmlTree ProfileDefine
+mapToCbilProfileDefines = proc tree -> do
+    pid    <- getAttrValue "profileid" -< tree
+    defineNames     <- getChildren >>> hasName "defines" >>> listA (getChildren >>> hasName "define" >>> getAttrValue "name") -< tree
+    defineValues     <- getChildren >>> hasName "defines" >>> listA (getChildren >>> hasName "define" >>> getChildren >>> getText) -< tree
+
+    returnA -< (pid, zip defineNames defineValues)
+
+mkProfileDefines :: String -> ProfileDefines -> Rules ProfileDefineList
+mkProfileDefines profile profiles = return $ lookup profile profiles
+
+initProfileDefines :: String -> FilePath -> Rules ProfileDefineList
+initProfileDefines profile cbilxml = do
+    profileDefines <- liftIO $ loadProfileDefines cbilxml
+    mkProfileDefines profile profileDefines
+
+applyProfileDefines :: String -> ProfileDefineList -> String
+applyProfileDefines str Nothing = str
+applyProfileDefines str (Just defines) = str
     
 -- ---------------------------------
 
 main = shakeArgs shakeOptions{shakeFiles="_build"} $ do
 
-    
+    let
+        profile = "prof1"
+        xmlpath = "example.xml"
     want ["help"]
 
-    cloneRuleNames <- initCloneProjects "prof1" "example.xml"
-    needsRuleNames <- initNeeds "prof1" "example.xml"
+    profDefines <- initProfileDefines profile xmlpath
+
+    phony "meme" $ do
+        putNormal $ show profDefines
+        putNormal $ applyProfileDefines "%DatabaseName%" profDefines
+        
+    cloneRuleNames <- initCloneProjects profile xmlpath
+    needsRuleNames <- initNeeds profile xmlpath
 
     phony "help" $ do
         putNormal $ "cleantest, clone1 " ++ intercalate ", " cloneRuleNames ++ " : " ++ intercalate ", " needsRuleNames
@@ -122,3 +153,33 @@ main = shakeArgs shakeOptions{shakeFiles="_build"} $ do
     phony "clone2" $ do
         command_ [Cwd "testRepos/buildArea"] "git" ["clone", "--single-branch", "--branch", "master", "../teb", "bob2"]
         putNormal "clone1"
+        
+    let
+        basewd = "c:\\Users\\DB_UpgradeScripts"
+        _dbdefine = "DB_43"
+        _sqlcmd wd dbname dbdefinename script = do
+            putNormal $ "Executing: " ++ script
+            command_ [Cwd wd, Shell] "sqlcmd" ["-S", ".", "-b", "-d", dbname, "-v", "DatabaseName="++dbdefinename, "-i", script]
+        
+    phony "jr_baselinedb" $ do
+        let
+            wd = basewd
+            sqlcmd = _sqlcmd wd "master" _dbdefine
+        sqlcmd "DropDB.sql"
+        sqlcmd "RestoreBaseline.sql"
+
+    phony "jr_allcp" $ do
+        let
+            wd = basewd
+            sqlcmd = _sqlcmd wd _dbdefine _dbdefine
+        sqlcmd "LocalAppConfig.sql"
+        sqlcmd "CP_0001.sql"
+        sqlcmd "CP_0002.sql"
+        sqlcmd "CP_0002_data_001.sql"
+        sqlcmd "CP_0003.sql"
+        
+    phony "ab_JR_43" $ do
+        let
+            wd = basewd <//> "LocalWork\\JR-43\\Current"
+            sqlcmd = _sqlcmd wd _dbdefine _dbdefine
+        sqlcmd "Update-XX-YY-001.publish.sql"
