@@ -2,7 +2,12 @@
 module Main where
 
 import Development.Shake
+import Data.Char
 import Data.List
+import qualified Data.ByteString.Search as BSS
+import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString.Lazy as BSL
+import qualified Data.ByteString as BS
 
 import System.Directory
 
@@ -107,7 +112,7 @@ mapToCbilProfileDefines = proc tree -> do
     defineNames     <- getChildren >>> hasName "defines" >>> listA (getChildren >>> hasName "define" >>> getAttrValue "name") -< tree
     defineValues     <- getChildren >>> hasName "defines" >>> listA (getChildren >>> hasName "define" >>> getChildren >>> getText) -< tree
 
-    returnA -< (pid, zip defineNames defineValues)
+    returnA -< (pid, zip (map (\s -> "%" ++ s ++ "%") defineNames) defineValues)
 
 mkProfileDefines :: String -> ProfileDefines -> Rules ProfileDefineList
 mkProfileDefines profile profiles = return $ lookup profile profiles
@@ -116,11 +121,13 @@ initProfileDefines :: String -> FilePath -> Rules ProfileDefineList
 initProfileDefines profile cbilxml = do
     profileDefines <- liftIO $ loadProfileDefines cbilxml
     mkProfileDefines profile profileDefines
-
+        
 applyProfileDefines :: String -> ProfileDefineList -> String
 applyProfileDefines str Nothing = str
-applyProfileDefines str (Just defines) = str
-    
+applyProfileDefines str (Just defines) = _applyProfileDefines str defines
+    where
+        _applyProfileDefines s d = foldr (\(k, v) a -> rep k v a) s d
+        rep replaceString withString str = map (chr . fromEnum) $ BSL.unpack $ BSS.replace (BS8.pack replaceString) (BS8.pack withString) (BS8.pack str)    
 -- ---------------------------------
 
 main = shakeArgs shakeOptions{shakeFiles="_build"} $ do
@@ -134,7 +141,7 @@ main = shakeArgs shakeOptions{shakeFiles="_build"} $ do
 
     phony "meme" $ do
         putNormal $ show profDefines
-        putNormal $ applyProfileDefines "%DatabaseName%" profDefines
+        putNormal $ applyProfileDefines "ABC%DatabaseName%DEF" profDefines
         
     cloneRuleNames <- initCloneProjects profile xmlpath
     needsRuleNames <- initNeeds profile xmlpath
