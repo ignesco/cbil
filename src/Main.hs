@@ -111,10 +111,13 @@ initDatabaseGroups profile profileDefines cbilxml = do
 
 mkDatabaseGroupRule :: DatabaseGroup -> Rules String
 mkDatabaseGroupRule (DatabaseGroup pid databaseGroupId workingDirectory scripts) = do
-
+    let
+        mk_sqlcmd wd script = do
+            putNormal $ concat ["sqlcmd:", wd, " : ", dbname script, " : ", dbdefinename script, " : ", scriptname script]
+        
     phony databaseGroupId $ do
         putNormal $ show (pid, databaseGroupId, workingDirectory, scripts)
-        -- command_ [Cwd wd] "git" ["clone", "--single-branch", "--branch", br, rloc, rname]
+        mapM_ (mk_sqlcmd workingDirectory) scripts
     return databaseGroupId
 
 mkDatabaseGroups :: String -> ProfileDefineList -> RawDatabaseGroup -> DatabaseGroup
