@@ -1,4 +1,13 @@
 <cbil>
+    <ProfileDefines>
+      <profile profileid="prof1">
+          <defines>
+              <define name="DatabaseName">XXDBNameXX</define>
+              <define name="WorkingDirectory">c:\Users\DBUpgradeScripts</define>
+          </defines>
+        </profile>
+    </ProfileDefines>
+    
     <CloneProjects>
         <project id="teb" profileid = "prof1">
             <workingDirectory>testRepos/buildArea</workingDirectory>
@@ -14,43 +23,33 @@
         </project>
     </CloneProjects>
 
-    <ProfileDefines>
-      <profile profileid="prof1">
-          <defines>
-              <define name="DatabaseName">XXDBNameXX</define>
-              <define name="WorkingDirectory">c:\Users\DBUpgradeScripts</define>
-          </defines>
-        </profile>
-    </ProfileDefines>
-
     <DatabaseGroups>
-      <DatabaseGroup id="ab_baselinedb" profileid="prof1">
-        <WorkingDirectory>%WorkingDirectory%</WorkingDirectory>
-        <DatabaseName>%DatabaseName%</DatabaseName>
-        <Scripts>
-            <Script dname="master" dbdefinename="%DatabaseName%">DropDB.sql</Script>
-            <Script dname="master" dbdefinename="%DatabaseName%">RestoreBaseline.sql</Script>
-        </Scripts>
-      </DatabaseGroup>
-      <DatabaseGroup id="ab_allcp" profileid="prof1">
-        <WorkingDirectory>%WorkingDirectory%</WorkingDirectory>
-        <Scripts>
-            <Script dname="%DatabaseName%" dbdefinename="%DatabaseName%">LocalAppConfig.sql</Script>
-            <Script dname="%DatabaseName%" dbdefinename="%DatabaseName%">CP_0001.sql</Script>
-            <Script dname="%DatabaseName%" dbdefinename="%DatabaseName%">CP_0002.sql</Script>
-            <Script dname="%DatabaseName%" dbdefinename="%DatabaseName%">CP_0003.sql</Script>
-        </Scripts>
-      </DatabaseGroup>
+      <databaseGroup id="ab_baselinedb" profileid="prof1">
+        <workingDirectory>%WorkingDirectory%</workingDirectory>
+        <scripts>
+            <script dname="master" dbdefinename="%DatabaseName%">DropDB.sql</script>
+            <script dname="master" dbdefinename="%DatabaseName%">RestoreBaseline.sql</script>
+        </scripts>
+      </databaseGroup>
+      <databaseGroup id="ab_allcp" profileid="prof1">
+        <workingDirectory>%WorkingDirectory%</workingDirectory>
+        <scripts>
+            <script dname="%DatabaseName%" dbdefinename="%DatabaseName%">LocalAppConfig.sql</script>
+            <script dname="%DatabaseName%" dbdefinename="%DatabaseName%">CP_0001.sql</script>
+            <script dname="%DatabaseName%" dbdefinename="%DatabaseName%">CP_0002.sql</script>
+            <script dname="%DatabaseName%" dbdefinename="%DatabaseName%">CP_0003.sql</script>
+        </scripts>
+      </databaseGroup>
     </DatabaseGroups>
 
     <Needs>
-      <NeedsList id = "all" profileid = "prof1">
+      <needsList id = "all" profileid = "prof1">
         <need>teb</need>
         <need>teb2bb</need>
-      </NeedsList>
-      <NeedsList id = "allx" profileid = "prof1">
+      </needsList>
+      <needsList id = "allx" profileid = "prof1">
         <need>tebX</need>
         <need>teb2bbX</need>
-      </NeedsList>
+      </needsList>
     </Needs>
 </cbil>

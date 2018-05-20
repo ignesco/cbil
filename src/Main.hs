@@ -20,6 +20,112 @@ main :: IO ()
 documentRoot :: String -> IOSLA (XIOState s) a XmlTree
 documentRoot xml = readDocument [] xml >>> getChildren >>> hasName "cbil"
 
+-- ProfileDefines --------------------
+
+type ProfileDefineList = Maybe [(String, String)]
+type ProfileDefine = (String, [(String, String)])
+type ProfileDefines = [ProfileDefine]
+
+getProfileDefinesTrees :: String -> IOSLA (XIOState s) a XmlTree
+getProfileDefinesTrees xml = documentRoot xml >>> getChildren >>> hasName "ProfileDefines" >>> getChildren >>> hasName "profile"
+
+loadProfileDefines :: String -> IO ProfileDefines
+loadProfileDefines xmlFile = do
+    trees <- runX (getProfileDefinesTrees xmlFile)
+    return $ concat $ map (runLA mapToCbilProfileDefines) trees
+
+mapToCbilProfileDefines :: ArrowXml t => t XmlTree ProfileDefine
+mapToCbilProfileDefines = proc tree -> do
+    pid             <- getAttrValue "profileid" -< tree
+    defines         <- getChildren >>> hasName "defines" -< tree
+    defineNames     <- listA (getChildren >>> hasName "define" >>> getAttrValue "name") -< defines
+    defineValues    <- listA (getChildren >>> hasName "define" >>> getChildren >>> getText) -< defines
+
+    returnA -< (pid, zip (map (\s -> "%" ++ s ++ "%") defineNames) defineValues)
+
+mkProfileDefines :: String -> ProfileDefines -> Rules ProfileDefineList
+mkProfileDefines profile profiles = return $ lookup profile profiles
+
+initProfileDefines :: String -> FilePath -> Rules ProfileDefineList
+initProfileDefines profile cbilxml = do
+    profileDefines <- liftIO $ loadProfileDefines cbilxml
+    mkProfileDefines profile profileDefines
+        
+applyProfileDefines :: ProfileDefineList -> String -> String
+applyProfileDefines Nothing str = str
+applyProfileDefines (Just defines) str = _applyProfileDefines defines str
+    where
+        _applyProfileDefines d s = foldr (\(k, v) a -> rep k v a) s d
+        rep replaceString withString str = map (chr . fromEnum) $ BSL.unpack $ BSS.replace (BS8.pack replaceString) (BS8.pack withString) (BS8.pack str)    
+
+-- DatabaseGroups ----------------------
+
+data Script = DatabaseGroupScript {
+        dbname :: String
+        , dbdefinename :: String
+        , scriptname :: String
+    }
+    deriving (Show)
+
+data DatabaseGroup = DatabaseGroup {
+            databaseGroupProfileId :: String
+            , databaseGroupId :: String
+            , workingDirectory :: FilePath
+            , scripts :: [Script]
+        }
+        deriving (Show)
+
+type DatabaseGroups = [DatabaseGroup]
+type RawDatabaseGroup = (String, String, FilePath, [(String, String, String)])
+        
+getDatabaseGroupsTrees :: String -> IOSLA (XIOState s) a XmlTree
+getDatabaseGroupsTrees xml = documentRoot xml >>> getChildren >>> hasName "DatabaseGroups" >>> getChildren >>> hasName "databaseGroup"
+
+loadDatabaseGroups :: String -> IO [RawDatabaseGroup]
+loadDatabaseGroups xmlFile = do
+    trees <- runX (getDatabaseGroupsTrees xmlFile)
+    return $ concat $ map (runLA mapToCbilDatabaseGroups) trees
+
+
+mapToCbilDatabaseGroups :: ArrowXml t => t XmlTree RawDatabaseGroup
+mapToCbilDatabaseGroups = let
+        dbnames         = getAttrValue "dname"
+        dbdefinenames   = getAttrValue "dbdefinename"
+        scriptNames     = getChildren >>> getText
+        scriptTuple     = dbnames &&& dbdefinenames &&& scriptNames >>> arr3 (,,)          
+    in proc tree -> do
+
+        pid                 <- getAttrValue "profileid" -< tree
+        databaseGroupId     <- getAttrValue "id" -< tree
+        workingDirectory    <- getChildren >>> hasName "workingDirectory" >>> getChildren >>> getText -< tree
+        scripts             <-  getChildren >>> hasName "scripts" >>> listA (getChildren >>> hasName "script" >>> scriptTuple) -< tree
+        
+        returnA -<  (pid, databaseGroupId, workingDirectory, scripts )
+
+initDatabaseGroups :: String -> ProfileDefineList -> FilePath -> Rules [String]
+initDatabaseGroups profile profileDefines cbilxml = do
+    rawDatabaseGroupsList <- liftIO $ loadDatabaseGroups cbilxml
+    let
+        rawDbGroupsForProfile = filter (\(p, _, _, _) -> p == profile) rawDatabaseGroupsList
+    mapM (mkDatabaseGroupRule . (mkDatabaseGroups profile profileDefines)) rawDbGroupsForProfile
+
+mkDatabaseGroupRule :: DatabaseGroup -> Rules String
+mkDatabaseGroupRule (DatabaseGroup pid databaseGroupId workingDirectory scripts) = do
+
+    phony databaseGroupId $ do
+        putNormal $ show (pid, databaseGroupId, workingDirectory, scripts)
+        -- command_ [Cwd wd] "git" ["clone", "--single-branch", "--branch", br, rloc, rname]
+    return databaseGroupId
+
+mkDatabaseGroups :: String -> ProfileDefineList -> RawDatabaseGroup -> DatabaseGroup
+mkDatabaseGroups profile profileDefines (pid, databaseGroupId, workingDirectory', scripts') = let
+        
+        applyProfileDefines' = applyProfileDefines profileDefines
+        workingDirectory = applyProfileDefines' workingDirectory'
+        scripts = map (\(dbname', dbdefinename', scriptname') -> DatabaseGroupScript (applyProfileDefines' dbname') (applyProfileDefines' dbdefinename') (applyProfileDefines' scriptname') ) scripts'
+    
+    in DatabaseGroup pid databaseGroupId workingDirectory scripts
+                
 -- CloneProjects ----------------------
 
 type CloneProject = (String, String, String, String, String)
@@ -56,14 +162,14 @@ mkCloneRule (pid, wd, rloc, br, rname) = do
 initCloneProjects :: String -> FilePath -> Rules [String]
 initCloneProjects profile cbilxml = do
     cloneProjects <- liftIO $ loadCloneProjects cbilxml
-    mkCloneRules cloneProjects
+    mkCloneRules cloneProjects        
 
 -- Needs --------------------
 
 type NeedsList = (String, [String])
 
 getNeedsListTrees :: String -> IOSLA (XIOState s) a XmlTree
-getNeedsListTrees xml = documentRoot xml >>> getChildren >>> hasName "Needs" >>> getChildren >>> hasName "NeedsList"
+getNeedsListTrees xml = documentRoot xml >>> getChildren >>> hasName "Needs" >>> getChildren >>> hasName "needsList"
 
 mapToCbilNeeds :: ArrowXml t => t XmlTree NeedsList
 mapToCbilNeeds = proc tree -> do
@@ -92,42 +198,6 @@ initNeeds profile cbilxml = do
     needsList <- liftIO $ loadNeeds cbilxml
     mkNeedsRules needsList
 
--- ProfileDefines --------------------
-
-type ProfileDefineList = Maybe [(String, String)]
-type ProfileDefine = (String, [(String, String)])
-type ProfileDefines = [ProfileDefine]
-
-getProfileDefinesTrees :: String -> IOSLA (XIOState s) a XmlTree
-getProfileDefinesTrees xml = documentRoot xml >>> getChildren >>> hasName "ProfileDefines" >>> getChildren >>> hasName "profile"
-
-loadProfileDefines :: String -> IO ProfileDefines
-loadProfileDefines xmlFile = do
-    trees <- runX (getProfileDefinesTrees xmlFile)
-    return $ concat $ map (runLA mapToCbilProfileDefines) trees
-
-mapToCbilProfileDefines :: ArrowXml t => t XmlTree ProfileDefine
-mapToCbilProfileDefines = proc tree -> do
-    pid    <- getAttrValue "profileid" -< tree
-    defineNames     <- getChildren >>> hasName "defines" >>> listA (getChildren >>> hasName "define" >>> getAttrValue "name") -< tree
-    defineValues     <- getChildren >>> hasName "defines" >>> listA (getChildren >>> hasName "define" >>> getChildren >>> getText) -< tree
-
-    returnA -< (pid, zip (map (\s -> "%" ++ s ++ "%") defineNames) defineValues)
-
-mkProfileDefines :: String -> ProfileDefines -> Rules ProfileDefineList
-mkProfileDefines profile profiles = return $ lookup profile profiles
-
-initProfileDefines :: String -> FilePath -> Rules ProfileDefineList
-initProfileDefines profile cbilxml = do
-    profileDefines <- liftIO $ loadProfileDefines cbilxml
-    mkProfileDefines profile profileDefines
-        
-applyProfileDefines :: String -> ProfileDefineList -> String
-applyProfileDefines str Nothing = str
-applyProfileDefines str (Just defines) = _applyProfileDefines str defines
-    where
-        _applyProfileDefines s d = foldr (\(k, v) a -> rep k v a) s d
-        rep replaceString withString str = map (chr . fromEnum) $ BSL.unpack $ BSS.replace (BS8.pack replaceString) (BS8.pack withString) (BS8.pack str)    
 -- ---------------------------------
 
 main = shakeArgs shakeOptions{shakeFiles="_build"} $ do
@@ -141,13 +211,14 @@ main = shakeArgs shakeOptions{shakeFiles="_build"} $ do
 
     phony "meme" $ do
         putNormal $ show profDefines
-        putNormal $ applyProfileDefines "ABC%DatabaseName%DEF" profDefines
+        putNormal $ applyProfileDefines profDefines "ABC%DatabaseName%DEF"
         
     cloneRuleNames <- initCloneProjects profile xmlpath
     needsRuleNames <- initNeeds profile xmlpath
+    databaseGroupsRuleNames <- initDatabaseGroups profile profDefines xmlpath
 
     phony "help" $ do
-        putNormal $ "cleantest, clone1 " ++ intercalate ", " cloneRuleNames ++ " : " ++ intercalate ", " needsRuleNames
+        putNormal $ "cleantest, clone1 " ++ intercalate ", " cloneRuleNames ++ " : " ++ intercalate ", " needsRuleNames ++ " : " ++ intercalate ", " databaseGroupsRuleNames
 
     phony "cleantest" $ do
         liftIO $ removeDirectoryRecursive "testRepos/buildArea/bob"
