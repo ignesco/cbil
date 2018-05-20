@@ -35,13 +35,15 @@ loadProfileDefines xmlFile = do
     return $ concat $ map (runLA mapToCbilProfileDefines) trees
 
 mapToCbilProfileDefines :: ArrowXml t => t XmlTree ProfileDefine
-mapToCbilProfileDefines = proc tree -> do
-    pid             <- getAttrValue "profileid" -< tree
-    defines         <- getChildren >>> hasName "defines" -< tree
-    defineNames     <- listA (getChildren >>> hasName "define" >>> getAttrValue "name") -< defines
-    defineValues    <- listA (getChildren >>> hasName "define" >>> getChildren >>> getText) -< defines
-
-    returnA -< (pid, zip (map (\s -> "%" ++ s ++ "%") defineNames) defineValues)
+mapToCbilProfileDefines = let 
+        defineNamesSelector = getAttrValue "name"
+        defineValuesSelector = getChildren >>> getText
+        kvPairTuplesSelector = defineNamesSelector &&& defineValuesSelector >>> arr2 (,)
+    in proc tree -> do
+        pid             <- getAttrValue "profileid" -< tree
+        defines         <- getChildren >>> hasName "defines" -< tree
+        kvPairsTuples   <- listA (getChildren >>> hasName "define" >>> kvPairTuplesSelector) -< defines
+        returnA -< (pid, map (\(k, v) -> (concat ["%",k, "%"], v)) kvPairsTuples)
 
 mkProfileDefines :: String -> ProfileDefines -> Rules ProfileDefineList
 mkProfileDefines profile profiles = return $ lookup profile profiles
@@ -89,18 +91,18 @@ loadDatabaseGroups xmlFile = do
 
 mapToCbilDatabaseGroups :: ArrowXml t => t XmlTree RawDatabaseGroup
 mapToCbilDatabaseGroups = let
-        dbnames         = getAttrValue "dname"
-        dbdefinenames   = getAttrValue "dbdefinename"
-        scriptNames     = getChildren >>> getText
-        scriptTuple     = dbnames &&& dbdefinenames &&& scriptNames >>> arr3 (,,)          
+        dbnamesSelector         = getAttrValue "dname"
+        dbdefinenamesSelector   = getAttrValue "dbdefinename"
+        scriptNamesSelector     = getChildren >>> getText
+        scriptTuplesSelector    = dbnamesSelector &&& dbdefinenamesSelector &&& scriptNamesSelector >>> arr3 (,,)
     in proc tree -> do
 
         pid                 <- getAttrValue "profileid" -< tree
         databaseGroupId     <- getAttrValue "id" -< tree
         workingDirectory    <- getChildren >>> hasName "workingDirectory" >>> getChildren >>> getText -< tree
-        scripts             <-  getChildren >>> hasName "scripts" >>> listA (getChildren >>> hasName "script" >>> scriptTuple) -< tree
+        scripts             <-  getChildren >>> hasName "scripts" >>> listA (getChildren >>> hasName "script" >>> scriptTuplesSelector) -< tree
         
-        returnA -<  (pid, databaseGroupId, workingDirectory, scripts )
+        returnA -<  (pid, databaseGroupId, workingDirectory, scripts)
 
 initDatabaseGroups :: String -> ProfileDefineList -> FilePath -> Rules [String]
 initDatabaseGroups profile profileDefines cbilxml = do
