@@ -157,8 +157,9 @@ mapToCbilCloneProjects = proc tree -> do
     
                          returnA -< (pid, wd, rloc, br, rname)
 
-mkCloneRules :: [CloneProject] -> Rules [String]
-mkCloneRules ps = do
+mkCloneRules :: String -> [CloneProject] -> Rules [String]
+mkCloneRules profile ps' = do
+    let ps = filter (\(_, prof, _, _, _) -> prof == profile)  ps'
     mapM_ mkCloneRule ps
     return $ map (\(pid, _, _, _, _) -> pid) ps
         
@@ -171,20 +172,21 @@ mkCloneRule (pid, wd, rloc, br, rname) = do
 initCloneProjects :: String -> FilePath -> Rules [String]
 initCloneProjects profile cbilxml = do
     cloneProjects <- liftIO $ loadCloneProjects cbilxml
-    mkCloneRules cloneProjects        
+    mkCloneRules profile cloneProjects
 
 -- Needs --------------------
 
-type NeedsList = (String, [String])
+type NeedsList = (String, String, [String])
 
 getNeedsListTrees :: String -> IOSLA (XIOState s) a XmlTree
 getNeedsListTrees xml = documentRoot xml >>> getChildren >>> hasName "Needs" >>> getChildren >>> hasName "needsList"
 
 mapToCbilNeeds :: ArrowXml t => t XmlTree NeedsList
 mapToCbilNeeds = proc tree -> do
-                         pid    <- getAttrValue "id" -< tree
-                         nl     <- listA (getChildren >>> hasName "need" >>> getChildren >>> getText) -< tree
-                         returnA -< (pid, nl)
+    pid         <- getAttrValue "id" -< tree
+    profile     <- getAttrValue "profileid" -< tree
+    nl          <- listA (getChildren >>> hasName "need" >>> getChildren >>> getText) -< tree
+    returnA -< (pid, profile, nl)
     
 loadNeeds :: String -> IO [NeedsList]
 loadNeeds xmlFile = do
@@ -192,20 +194,21 @@ loadNeeds xmlFile = do
     return $ concat $ map (runLA mapToCbilNeeds) trees
 
 mkNeedsRule :: NeedsList -> Rules ()
-mkNeedsRule (pid, nl) = do
+mkNeedsRule (pid, _, nl) = do
         phony pid $ do
             need $ reverse nl
 
 
-mkNeedsRules :: [NeedsList] -> Rules [String]
-mkNeedsRules nl = do
+mkNeedsRules :: String -> [NeedsList] -> Rules [String]
+mkNeedsRules profile nl' = do
+    let nl = filter (\(_, prof, _ ) -> prof == profile) nl'
     mapM_ mkNeedsRule nl
-    return $ map fst nl
+    return $ map (\(pid, _, _) -> pid) nl
 
 initNeeds :: String -> FilePath -> Rules [String]
 initNeeds profile cbilxml = do
     needsList <- liftIO $ loadNeeds cbilxml
-    mkNeedsRules needsList
+    mkNeedsRules profile needsList
 
 -- ---------------------------------
 
