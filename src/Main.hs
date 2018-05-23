@@ -198,7 +198,6 @@ mkNeedsRule (pid, _, nl) = do
         phony pid $ do
             need $ reverse nl
 
-
 mkNeedsRules :: String -> [NeedsList] -> Rules [String]
 mkNeedsRules profile nl' = do
     let nl = filter (\(_, prof, _ ) -> prof == profile) nl'
@@ -211,6 +210,27 @@ initNeeds profile cbilxml = do
     mkNeedsRules profile needsList
 
 -- ---------------------------------
+
+-- Visual Studio -------------------
+type VisualStudioList = (String, String, String, String, String, String)
+
+getVisualStudioListTrees :: String -> IOSLA (XIOState s) a XmlTree
+getVisualStudioListTrees xml = documentRoot xml >>> getChildren >>> hasName "VisualStudioSolutionGroups" >>> getChildren >>> hasName "visualStudioSolutionGroup"
+
+mapToCbilVisualStudio :: ArrowXml t => t XmlTree VisualStudioList
+mapToCbilVisualStudio = proc tree -> do
+    pid             <- getAttrValue "id" -< tree
+    profile         <- getAttrValue "profileid" -< tree
+    solutionPath    <- getChildren >>> hasName "solutionPath" >>> getChildren >>> getText -< tree
+    solutionFile    <- getChildren >>> hasName "solutionFile" >>> getChildren >>> getText -< tree
+    target          <- getChildren >>> hasName "target" >>> getChildren >>> getText -< tree
+    configuration   <- getChildren >>> hasName "configuration" >>> getChildren >>> getText -< tree
+    returnA -< (pid, profile, solutionPath, solutionFile, target, configuration)
+
+loadVisualStudios :: String -> IO [VisualStudioList]
+loadVisualStudios xmlFile = do
+    trees <- runX (getVisualStudioListTrees xmlFile)
+    return $ concat $ map (runLA mapToCbilVisualStudio) trees
 
 -- WIP START - visual studio and nettiers --
 buildVisualStudioSolution :: FilePath -> FilePath -> String -> String -> Action()
