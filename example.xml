@@ -23,21 +23,45 @@
         </project>
     </CloneProjects>
 
+    <VisualStudioSolutionGroups>
+      <visualStudioSolutionGroup id="jr_sln" profileid="prof1">
+        <solutionPath>..\Solution</solutionPath>
+        <solutionFile>jr.sln</solutionFile>
+        <target>Clean</target>
+        <configuration>Debug</configuration>
+      </visualStudioSolutionGroup>
+      <visualStudioSolutionGroup id="bt_sln" profileid="prof1">
+        <solutionPath>..\BT\Solution</solutionPath>
+        <solutionFile>bt.sln</solutionFile>
+        <target>Clean</target>
+        <configuration>Release</configuration>
+      </visualStudioSolutionGroup>
+    </VisualStudioSolutionGroups>
+
     <DatabaseGroups>
-      <databaseGroup id="ab_baselinedb" profileid="prof1">
+      
+      <databaseGroup id="jr_baselinedb" profileid="prof1">
         <workingDirectory>%WorkingDirectory%</workingDirectory>
         <scripts>
             <script dname="master" dbdefinename="%DatabaseName%">DropDB.sql</script>
             <script dname="master" dbdefinename="%DatabaseName%">RestoreBaseline.sql</script>
         </scripts>
       </databaseGroup>
-      <databaseGroup id="ab_allcp" profileid="prof1">
+      
+      <databaseGroup id="jr_allcp" profileid="prof1">
         <workingDirectory>%WorkingDirectory%</workingDirectory>
         <scripts>
-            <script dname="%DatabaseName%" dbdefinename="%DatabaseName%">LocalAppConfig.sql</script>
+            <script dname="%DatabaseName%" dbdefinename="%DatabaseName%">LocalAC.sql</script>
             <script dname="%DatabaseName%" dbdefinename="%DatabaseName%">CP_0001.sql</script>
             <script dname="%DatabaseName%" dbdefinename="%DatabaseName%">CP_0002.sql</script>
             <script dname="%DatabaseName%" dbdefinename="%DatabaseName%">CP_0003.sql</script>
+        </scripts>
+      </databaseGroup>
+      
+      <databaseGroup id="bt_localFinalEnq" profileid="prof1">
+        <workingDirectory>%WorkingDirectory%</workingDirectory>
+        <scripts>
+            <script dname="%DatabaseName%" dbdefinename="%DatabaseName%">LocalFinalEnq.sql</script>
         </scripts>
       </databaseGroup>
     </DatabaseGroups>

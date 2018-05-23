@@ -89,7 +89,6 @@ loadDatabaseGroups xmlFile = do
     trees <- runX (getDatabaseGroupsTrees xmlFile)
     return $ concat $ map (runLA mapToCbilDatabaseGroups) trees
 
-
 mapToCbilDatabaseGroups :: ArrowXml t => t XmlTree RawDatabaseGroup
 mapToCbilDatabaseGroups = let
         dbnamesSelector         = getAttrValue "dname"
@@ -212,12 +211,20 @@ initNeeds profile cbilxml = do
 -- ---------------------------------
 
 -- Visual Studio -------------------
-type VisualStudioList = (String, String, String, String, String, String)
+type RawVisualStudio = (String, String, String, String, String, String)
+data VisualStudio = VisualStudio {
+        visualStudioId :: String
+        , visualStudioProfile :: String
+        , visualStudioSolutionPath :: FilePath
+        , visualStudioSolutionFile :: String
+        , visualStudioTarget :: String
+        , visualStudioConfiguration :: String
+    } deriving (Show)
 
 getVisualStudioListTrees :: String -> IOSLA (XIOState s) a XmlTree
 getVisualStudioListTrees xml = documentRoot xml >>> getChildren >>> hasName "VisualStudioSolutionGroups" >>> getChildren >>> hasName "visualStudioSolutionGroup"
 
-mapToCbilVisualStudio :: ArrowXml t => t XmlTree VisualStudioList
+mapToCbilVisualStudio :: ArrowXml t => t XmlTree RawVisualStudio
 mapToCbilVisualStudio = proc tree -> do
     pid             <- getAttrValue "id" -< tree
     profile         <- getAttrValue "profileid" -< tree
@@ -227,16 +234,39 @@ mapToCbilVisualStudio = proc tree -> do
     configuration   <- getChildren >>> hasName "configuration" >>> getChildren >>> getText -< tree
     returnA -< (pid, profile, solutionPath, solutionFile, target, configuration)
 
-loadVisualStudios :: String -> IO [VisualStudioList]
+loadVisualStudios :: String -> IO [RawVisualStudio]
 loadVisualStudios xmlFile = do
     trees <- runX (getVisualStudioListTrees xmlFile)
     return $ concat $ map (runLA mapToCbilVisualStudio) trees
 
--- WIP START - visual studio and nettiers --
-buildVisualStudioSolution :: FilePath -> FilePath -> String -> String -> Action()
-buildVisualStudioSolution pathToSolution solutionFilename target configuration = do
-    cmd [Cwd pathToSolution, AddPath ["c:\\Program Files (x86)\\MSBuild\\12.0\\Bin\\"] [] ] "MSBuild.exe" [solutionFilename, "/t:" ++ target, "/p:Configuration=" ++ configuration]
+initVisualStudios :: String -> ProfileDefineList -> FilePath -> Rules [String]
+initVisualStudios profile profileDefines cbilxml = do
+    rawVisualStudiosList <- liftIO $ loadVisualStudios cbilxml
+    let
+        rawVisualStudiosForProfile = filter (\(_, p, _, _, _, _) -> p == profile) rawVisualStudiosList
+    mapM (mkVisualStudioRule . (mkVisualStudios profile profileDefines)) rawVisualStudiosForProfile
 
+mkVisualStudioRule :: VisualStudio -> Rules String
+mkVisualStudioRule (VisualStudio pid profile solutionPath solutionFile target configuration) = do
+    let
+        _visualstudio pathToSolution solutionFilename target configuration = do
+            putNormal $ concat ["Executing MSBuild: ", pathToSolution, " : ", solutionFilename, " : ", target, " : ", configuration]
+            cmd [Cwd pathToSolution, AddPath ["c:\\Program Files (x86)\\MSBuild\\12.0\\Bin\\"] [] ] "MSBuild.exe" [solutionFilename, "/t:" ++ target, "/p:Configuration=" ++ configuration]
+        
+    phony pid $ do
+        _visualstudio solutionPath solutionFile target configuration
+    return pid
+
+mkVisualStudios :: String -> ProfileDefineList -> RawVisualStudio -> VisualStudio
+mkVisualStudios profile profileDefines (pid, _, solutionPath', solutionFile', target', configuration') = let
+        applyProfileDefines' = applyProfileDefines profileDefines
+        solutionPath = applyProfileDefines' solutionPath'
+        solutionFile = applyProfileDefines' solutionFile'
+        target = applyProfileDefines' target'
+        configuration = applyProfileDefines' configuration'
+    in VisualStudio pid profile solutionPath solutionFile target configuration
+
+-- WIP START - visual studio and nettiers --
 netttiersPath = "d:\\Projects\\nettiers-2.3.0"
 nettiersTemplateLocation = netttiersPath </> "NetTiers.cst"
 
@@ -274,9 +304,10 @@ main = shakeArgs shakeOptions{shakeFiles="_build"} $ do
     cloneRuleNames <- initCloneProjects profile xmlpath
     needsRuleNames <- initNeeds profile xmlpath
     databaseGroupsRuleNames <- initDatabaseGroups profile profDefines xmlpath
+    visualStudioRuleNames <- initVisualStudios profile profDefines xmlpath
 
     phony "help" $ do
-        putNormal $ "cleantest, clone1 " ++ intercalate ", " cloneRuleNames ++ " : " ++ intercalate ", " needsRuleNames ++ " : " ++ intercalate ", " databaseGroupsRuleNames
+        putNormal $ "cleantest, clone1 " ++ intercalate ", " cloneRuleNames ++ " : " ++ intercalate ", " needsRuleNames ++ " : " ++ intercalate ", " databaseGroupsRuleNames ++ " : " ++ intercalate ", " visualStudioRuleNames
 
     phony "cleantest" $ do
         liftIO $ removeDirectoryRecursive "testRepos/buildArea/bob"
