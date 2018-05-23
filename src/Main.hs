@@ -10,6 +10,7 @@ import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString as BS
 
 import System.Directory
+import Development.Shake.FilePath
 
 import Text.XML.HXT.Arrow.ReadDocument
 import Text.XML.HXT.Core
@@ -114,9 +115,9 @@ initDatabaseGroups profile profileDefines cbilxml = do
 mkDatabaseGroupRule :: DatabaseGroup -> Rules String
 mkDatabaseGroupRule (DatabaseGroup pid databaseGroupId workingDirectory scripts) = do
     let
-        _sqlcmd wd dbname dbdefinename script = do
-            putNormal $ concat ["Executing sqlcmd: ", wd, " : ", dbname script, " : ", dbdefinename script, " : ", scriptname script]
-            command_ [Cwd wd, Shell] "sqlcmd" ["-S", ".", "-b", "-d", dbname, "-v", "DatabaseName="++dbdefinename, "-i", script]
+        _sqlcmd wd dbname dbdefinename scriptname = do
+            putNormal $ concat ["Executing sqlcmd: ", wd, " : ", dbname, " : ", dbdefinename, " : ", scriptname]
+            command_ [Cwd wd, Shell] "sqlcmd" ["-S", ".", "-b", "-d", dbname, "-v", "DatabaseName="++dbdefinename, "-i", scriptname]
 
         mk_sqlcmd wd script = _sqlcmd wd (dbname script) (dbdefinename script) (scriptname script)
         
@@ -207,6 +208,32 @@ initNeeds profile cbilxml = do
     mkNeedsRules needsList
 
 -- ---------------------------------
+
+-- WIP START - visual studio and nettiers --
+buildVisualStudioSolution :: FilePath -> FilePath -> String -> String -> Action()
+buildVisualStudioSolution pathToSolution solutionFilename target configuration = do
+    cmd [Cwd pathToSolution, AddPath ["c:\\Program Files (x86)\\MSBuild\\12.0\\Bin\\"] [] ] "MSBuild.exe" [solutionFilename, "/t:" ++ target, "/p:Configuration=" ++ configuration]
+
+netttiersPath = "d:\\Projects\\nettiers-2.3.0"
+nettiersTemplateLocation = netttiersPath </> "NetTiers.cst"
+
+generateNettiers :: String -> String -> String -> Action ()
+generateNettiers templatedb db nettiersdir = do
+        buildDir <- liftIO $ getCurrentDirectory
+        let
+            outputPath = buildDir </> nettiersdir
+            buildTemplatePath = outputPath </> "Build.xml"
+            buildGenericPath = outputPath </> "BuildGeneric.xml"
+        liftIO $ sed buildTemplatePath buildGenericPath ("database=" ++ templatedb) ("database=" ++ db)
+        cmd [Cwd netttiersPath, AddPath ["c:\\Program Files (x86)\\CodeSmith\\v3.2"] [] ] "cs.exe" ["/template:" ++ nettiersTemplateLocation, "/propertyset:" ++ buildGenericPath, "/property:OutputDirectory=" ++ outputPath]
+
+sed :: FilePath -> FilePath -> String -> String -> IO ()
+sed srcFile destFile replaceString withString = do
+    f <- BS.readFile srcFile
+    let
+        updatedText = BSS.replace (BS8.pack replaceString) (BS8.pack withString) f
+    BSL.writeFile destFile updatedText
+-- WIP END --
 
 main = shakeArgs shakeOptions{shakeFiles="_build"} $ do
 
