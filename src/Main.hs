@@ -114,8 +114,11 @@ initDatabaseGroups profile profileDefines cbilxml = do
 mkDatabaseGroupRule :: DatabaseGroup -> Rules String
 mkDatabaseGroupRule (DatabaseGroup pid databaseGroupId workingDirectory scripts) = do
     let
-        mk_sqlcmd wd script = do
-            putNormal $ concat ["sqlcmd:", wd, " : ", dbname script, " : ", dbdefinename script, " : ", scriptname script]
+        _sqlcmd wd dbname dbdefinename script = do
+            putNormal $ concat ["Executing sqlcmd: ", wd, " : ", dbname script, " : ", dbdefinename script, " : ", scriptname script]
+            command_ [Cwd wd, Shell] "sqlcmd" ["-S", ".", "-b", "-d", dbname, "-v", "DatabaseName="++dbdefinename, "-i", script]
+
+        mk_sqlcmd wd script = _sqlcmd wd (dbname script) (dbdefinename script) (scriptname script)
         
     phony databaseGroupId $ do
         putNormal $ show (pid, databaseGroupId, workingDirectory, scripts)
