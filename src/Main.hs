@@ -96,11 +96,10 @@ mapToCbilDatabaseGroups = let
         scriptNamesSelector     = getChildren >>> getText
         scriptTuplesSelector    = dbnamesSelector &&& dbdefinenamesSelector &&& scriptNamesSelector >>> arr3 (,,)
     in proc tree -> do
-
         pid                 <- getAttrValue "profileid" -< tree
         databaseGroupId     <- getAttrValue "id" -< tree
         workingDirectory    <- getChildren >>> hasName "workingDirectory" >>> getChildren >>> getText -< tree
-        scripts             <-  getChildren >>> hasName "scripts" >>> listA (getChildren >>> hasName "script" >>> scriptTuplesSelector) -< tree
+        scripts             <- getChildren >>> hasName "scripts" >>> listA (getChildren >>> hasName "script" >>> scriptTuplesSelector) -< tree
         
         returnA -<  (pid, databaseGroupId, workingDirectory, scripts)
 
@@ -208,9 +207,8 @@ initNeeds profile cbilxml = do
     needsList <- liftIO $ loadNeeds cbilxml
     mkNeedsRules profile needsList
 
--- ---------------------------------
-
 -- Visual Studio -------------------
+        
 type RawVisualStudio = (String, String, String, String, String, String)
 data VisualStudio = VisualStudio {
         visualStudioId :: String
@@ -265,28 +263,83 @@ mkVisualStudios profile profileDefines (pid, _, solutionPath', solutionFile', ta
         target = applyProfileDefines' target'
         configuration = applyProfileDefines' configuration'
     in VisualStudio pid profile solutionPath solutionFile target configuration
+        
+-- NetTiers -------------------
+type RawNetTiersGroup = (String, String, String, String, String, String, FilePath)
+data NetTiersGroup = NetTiersGroup {
+        netTiersId :: String
+        , netTiersProfile :: String
+        , netTiersPath :: FilePath
+        , nettiersTemplateLocation :: FilePath
+        , templatedb :: String
+        , db :: String
+        , nettiersdir :: FilePath
+    } deriving (Show)
 
--- WIP START - visual studio and nettiers --
-netttiersPath = "d:\\Projects\\nettiers-2.3.0"
-nettiersTemplateLocation = netttiersPath </> "NetTiers.cst"
+getNetTiersGroupsTrees :: String -> IOSLA (XIOState s) a XmlTree
+getNetTiersGroupsTrees xml = documentRoot xml >>> getChildren >>> hasName "NetTiersGroups" >>> getChildren >>> hasName "netTiers"
 
-generateNettiers :: String -> String -> String -> Action ()
-generateNettiers templatedb db nettiersdir = do
-        buildDir <- liftIO $ getCurrentDirectory
-        let
-            outputPath = buildDir </> nettiersdir
-            buildTemplatePath = outputPath </> "Build.xml"
-            buildGenericPath = outputPath </> "BuildGeneric.xml"
-        liftIO $ sed buildTemplatePath buildGenericPath ("database=" ++ templatedb) ("database=" ++ db)
-        cmd [Cwd netttiersPath, AddPath ["c:\\Program Files (x86)\\CodeSmith\\v3.2"] [] ] "cs.exe" ["/template:" ++ nettiersTemplateLocation, "/propertyset:" ++ buildGenericPath, "/property:OutputDirectory=" ++ outputPath]
+mapToCbilNetTiersGroup :: ArrowXml t => t XmlTree RawNetTiersGroup
+mapToCbilNetTiersGroup = proc tree -> do
+    pid                         <- getAttrValue "id" -< tree
+    profile                     <- getAttrValue "profileid" -< tree
+    netTiersPath                <- getChildren >>> hasName "netTiersPath" >>> getChildren >>> getText -< tree
+    nettiersTemplateLocation    <- getChildren >>> hasName "nettiersTemplateLocation" >>> getChildren >>> getText -< tree
+    templatedb                  <- getChildren >>> hasName "templatedb" >>> getChildren >>> getText -< tree
+    db                          <- getChildren >>> hasName "db" >>> getChildren >>> getText -< tree
+    nettiersdir                 <- getChildren >>> hasName "nettiersdir" >>> getChildren >>> getText -< tree
 
+    returnA -< (pid, profile, netTiersPath, nettiersTemplateLocation, templatedb, db, nettiersdir)
+
+loadNetTiersGroups :: String -> IO [RawNetTiersGroup]
+loadNetTiersGroups xmlFile = do
+    trees <- runX (getNetTiersGroupsTrees xmlFile)
+    return $ concat $ map (runLA mapToCbilNetTiersGroup) trees
+
+initNetTiersGroups :: String -> ProfileDefineList -> FilePath -> Rules [String]
+initNetTiersGroups profile profileDefines cbilxml = do
+    rawNetTiersGroupsList <- liftIO $ loadNetTiersGroups cbilxml
+    let
+        rawNetTiersGroupsForProfile = filter (\(_, p, _, _, _, _, _) -> p == profile) rawNetTiersGroupsList
+    mapM (mkNetTiersGroupRule . (mkNetTiersGroup profile profileDefines)) rawNetTiersGroupsForProfile
+
+mkNetTiersGroupRule :: NetTiersGroup -> Rules String
+mkNetTiersGroupRule (NetTiersGroup netTiersGroupId pid netTiersPath nettiersTemplateLocation templatedb db nettiersdir) = do
+    let        
+        generateNettiers :: FilePath -> FilePath -> String -> String -> String -> Action ()
+        generateNettiers netttiersPath nettiersTemplateLocation templatedb db nettiersdir = do
+            buildDir <- liftIO $ getCurrentDirectory
+            let
+                outputPath = buildDir </> nettiersdir
+                buildTemplatePath = outputPath </> "Build.xml"
+                buildGenericPath = outputPath </> "BuildGeneric.xml"
+            liftIO $ sed buildTemplatePath buildGenericPath ("database=" ++ templatedb) ("database=" ++ db)
+            cmd [Cwd netttiersPath, AddPath ["c:\\Program Files (x86)\\CodeSmith\\v3.2"] [] ] "cs.exe" ["/template:" ++ nettiersTemplateLocation, "/propertyset:" ++ buildGenericPath, "/property:OutputDirectory=" ++ outputPath]
+        
+    phony netTiersGroupId $ do
+        putNormal $ show (netTiersGroupId, pid, netTiersPath, nettiersTemplateLocation, templatedb, db, nettiersdir)
+        generateNettiers netTiersPath nettiersTemplateLocation templatedb db nettiersdir
+    return netTiersGroupId
+        
+mkNetTiersGroup :: String -> ProfileDefineList -> RawNetTiersGroup -> NetTiersGroup
+mkNetTiersGroup profile profileDefines (netTiersGroupId, pid, netTiersPath', nettiersTemplateLocation', templatedb', db', nettiersdir') = let
+        
+        applyProfileDefines' = applyProfileDefines profileDefines
+        netTiersPath = applyProfileDefines' netTiersPath'
+        nettiersTemplateLocation = applyProfileDefines' nettiersTemplateLocation'
+        templatedb = applyProfileDefines' templatedb'
+        db = applyProfileDefines' db'
+        nettiersdir = applyProfileDefines' nettiersdir'
+    in NetTiersGroup netTiersGroupId pid netTiersPath nettiersTemplateLocation templatedb db nettiersdir
+        
+-- Extra helper function for NetTiers --
 sed :: FilePath -> FilePath -> String -> String -> IO ()
 sed srcFile destFile replaceString withString = do
     f <- BS.readFile srcFile
     let
         updatedText = BSS.replace (BS8.pack replaceString) (BS8.pack withString) f
     BSL.writeFile destFile updatedText
--- WIP END --
+-- Helper function END --
 
 main = shakeArgs shakeOptions{shakeFiles="_build"} $ do
 
@@ -305,9 +358,10 @@ main = shakeArgs shakeOptions{shakeFiles="_build"} $ do
     needsRuleNames <- initNeeds profile xmlpath
     databaseGroupsRuleNames <- initDatabaseGroups profile profDefines xmlpath
     visualStudioRuleNames <- initVisualStudios profile profDefines xmlpath
+    netTiersGroupsRuleNames <- initNetTiersGroups profile profDefines xmlpath
 
     phony "help" $ do
-        putNormal $ "cleantest, clone1 " ++ intercalate ", " cloneRuleNames ++ " : " ++ intercalate ", " needsRuleNames ++ " : " ++ intercalate ", " databaseGroupsRuleNames ++ " : " ++ intercalate ", " visualStudioRuleNames
+        putNormal $ "cleantest, clone1 " ++ intercalate ", " cloneRuleNames ++ " : " ++ intercalate ", " needsRuleNames ++ " : " ++ intercalate ", " databaseGroupsRuleNames ++ " : " ++ intercalate ", " visualStudioRuleNames++ " : " ++ intercalate ", " netTiersGroupsRuleNames
 
     phony "cleantest" $ do
         liftIO $ removeDirectoryRecursive "testRepos/buildArea/bob"

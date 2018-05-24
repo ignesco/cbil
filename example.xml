@@ -4,6 +4,7 @@
           <defines>
               <define name="DatabaseName">XXDBNameXX</define>
               <define name="WorkingDirectory">c:\Users\DBUpgradeScripts</define>
+              <define name="NETTIERSPATH">d:\Projects\nettiers-2.3.0</define>
           </defines>
         </profile>
     </ProfileDefines>
@@ -22,6 +23,23 @@
             <localRepoName>bob2</localRepoName>
         </project>
     </CloneProjects>
+
+    <NetTiersGroups>
+      <netTiers id="bt_nettiers" profileid="prof1">
+          <netTiersPath>%NETTIERSPATH%</netTiersPath>
+          <nettiersTemplateLocation>%NETTIERSPATH%\NetTiers.cst</nettiersTemplateLocation>
+          <templatedb>templateDB</templatedb>
+          <db>THEDB</db>
+          <nettiersdir>NTDIR</nettiersdir>
+      </netTiers>
+      <netTiers id="jr_nettiers" profileid="prof1">
+          <netTiersPath>%NETTIERSPATH%</netTiersPath>
+          <nettiersTemplateLocation>%NETTIERSPATH%\NetTiers.cst</nettiersTemplateLocation>
+          <templatedb>templateDB</templatedb>
+          <db>THEDB2</db>
+          <nettiersdir>NTDIR</nettiersdir>
+      </netTiers>
+    </NetTiersGroups>
 
     <VisualStudioSolutionGroups>
       <visualStudioSolutionGroup id="jr_sln" profileid="prof1">
