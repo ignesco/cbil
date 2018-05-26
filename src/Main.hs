@@ -9,17 +9,24 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString as BS
 
-import System.Directory
+import System.Console.GetOpt
+import qualified System.Directory as SD
 import Development.Shake.FilePath
 
 import Text.XML.HXT.Arrow.ReadDocument
 import Text.XML.HXT.Core
 import Text.XML.HXT.DOM.FormatXmlTree
     
-main :: IO ()
-
 documentRoot :: String -> IOSLA (XIOState s) a XmlTree
 documentRoot xml = readDocument [] xml >>> getChildren >>> hasName "cbil"
+
+-- Cbil data types -------------------
+data CbilConfiguration = CbilConfiguration {
+        cbilProfile :: String
+        , cbilSettingsFile :: FilePath
+    }
+
+type CbilRulesInfo = (String, [String])
 
 -- ProfileDefines --------------------
 
@@ -49,11 +56,11 @@ mapToCbilProfileDefines = let
 mkProfileDefines :: String -> ProfileDefines -> Rules ProfileDefineList
 mkProfileDefines profile profiles = return $ lookup profile profiles
 
-initProfileDefines :: String -> FilePath -> Rules ProfileDefineList
-initProfileDefines profile cbilxml = do
-    profileDefines <- liftIO $ loadProfileDefines cbilxml
-    mkProfileDefines profile profileDefines
-        
+initProfileDefines :: CbilConfiguration -> Rules ProfileDefineList
+initProfileDefines configuration = do
+    profileDefines <- liftIO $ loadProfileDefines (cbilSettingsFile configuration)
+    mkProfileDefines (cbilProfile configuration) profileDefines
+
 applyProfileDefines :: ProfileDefineList -> String -> String
 applyProfileDefines Nothing str = str
 applyProfileDefines (Just defines) str = _applyProfileDefines defines str
@@ -103,12 +110,14 @@ mapToCbilDatabaseGroups = let
         
         returnA -<  (pid, databaseGroupId, workingDirectory, scripts)
 
-initDatabaseGroups :: String -> ProfileDefineList -> FilePath -> Rules [String]
-initDatabaseGroups profile profileDefines cbilxml = do
-    rawDatabaseGroupsList <- liftIO $ loadDatabaseGroups cbilxml
+initDatabaseGroups :: CbilConfiguration -> ProfileDefineList -> Rules CbilRulesInfo
+initDatabaseGroups configuration profileDefines = do
+    rawDatabaseGroupsList <- liftIO $ loadDatabaseGroups (cbilSettingsFile configuration)
     let
+        profile = (cbilProfile configuration)
         rawDbGroupsForProfile = filter (\(p, _, _, _) -> p == profile) rawDatabaseGroupsList
-    mapM (mkDatabaseGroupRule . (mkDatabaseGroups profile profileDefines)) rawDbGroupsForProfile
+    rules <- mapM (mkDatabaseGroupRule . (mkDatabaseGroups profile profileDefines)) rawDbGroupsForProfile
+    return ("DatabaseGroups", rules)
 
 mkDatabaseGroupRule :: DatabaseGroup -> Rules String
 mkDatabaseGroupRule (DatabaseGroup pid databaseGroupId workingDirectory scripts) = do
@@ -135,7 +144,7 @@ mkDatabaseGroups profile profileDefines (pid, databaseGroupId, workingDirectory'
                 
 -- CloneProjects ----------------------
 
-type CloneProject = (String, String, String, String, String)
+type CloneProject = (String, String, String, String, String, String)
     
 getCloneProjectTrees :: String -> IOSLA (XIOState s) a XmlTree
 getCloneProjectTrees xml = documentRoot xml >>> getChildren >>> hasName "CloneProjects" >>> getChildren >>> hasName "project"
@@ -147,30 +156,32 @@ loadCloneProjects xmlFile = do
 
 mapToCbilCloneProjects :: ArrowXml t => t XmlTree CloneProject
 mapToCbilCloneProjects = proc tree -> do
-                         pid    <- getAttrValue "id" -< tree
-                         wd     <- getChildren >>> hasName "workingDirectory" >>> getChildren >>> getText -< tree
-                         rloc   <- getChildren >>> hasName "repoLocation" >>> getChildren >>> getText -< tree
-                         br     <- getChildren >>> hasName "branch" >>> getChildren >>> getText -< tree
-                         rname     <- getChildren >>> hasName "localRepoName" >>> getChildren >>> getText -< tree
-    
-                         returnA -< (pid, wd, rloc, br, rname)
+    pid     <- getAttrValue "id" -< tree
+    profid  <- getAttrValue "profileid" -< tree
+    wd      <- getChildren >>> hasName "workingDirectory" >>> getChildren >>> getText -< tree
+    rloc    <- getChildren >>> hasName "repoLocation" >>> getChildren >>> getText -< tree
+    br      <- getChildren >>> hasName "branch" >>> getChildren >>> getText -< tree
+    rname   <- getChildren >>> hasName "localRepoName" >>> getChildren >>> getText -< tree
 
-mkCloneRules :: String -> [CloneProject] -> Rules [String]
+    returnA -< (pid, profid, wd, rloc, br, rname)
+
+mkCloneRules :: String -> [CloneProject] -> Rules CbilRulesInfo
 mkCloneRules profile ps' = do
-    let ps = filter (\(_, prof, _, _, _) -> prof == profile)  ps'
-    mapM_ mkCloneRule ps
-    return $ map (\(pid, _, _, _, _) -> pid) ps
+    let ps = filter (\(_, prof, _, _, _, _) -> prof == profile)  ps'
+    rules <- mapM mkCloneRule ps
+    return ("CloneProjects", rules)
         
-mkCloneRule :: CloneProject -> Rules ()
-mkCloneRule (pid, wd, rloc, br, rname) = do
+mkCloneRule :: CloneProject -> Rules String
+mkCloneRule (pid, _, wd, rloc, br, rname) = do
     phony pid $ do
-        putNormal $ pid ++ "!!!"
+        putNormal $ "CloneProject: " ++ intercalate " : " [br, rloc, rname]
         command_ [Cwd wd] "git" ["clone", "--single-branch", "--branch", br, rloc, rname]
+    return pid
 
-initCloneProjects :: String -> FilePath -> Rules [String]
-initCloneProjects profile cbilxml = do
-    cloneProjects <- liftIO $ loadCloneProjects cbilxml
-    mkCloneRules profile cloneProjects
+initCloneProjects :: CbilConfiguration -> ProfileDefineList -> Rules CbilRulesInfo
+initCloneProjects configuration _ = do
+    cloneProjects <- liftIO $ loadCloneProjects (cbilSettingsFile configuration)
+    mkCloneRules (cbilProfile configuration) cloneProjects
 
 -- Needs --------------------
 
@@ -196,16 +207,16 @@ mkNeedsRule (pid, _, nl) = do
         phony pid $ do
             need $ reverse nl
 
-mkNeedsRules :: String -> [NeedsList] -> Rules [String]
+mkNeedsRules :: String -> [NeedsList] -> Rules CbilRulesInfo
 mkNeedsRules profile nl' = do
     let nl = filter (\(_, prof, _ ) -> prof == profile) nl'
     mapM_ mkNeedsRule nl
-    return $ map (\(pid, _, _) -> pid) nl
+    return $ ("Needs", map (\(pid, _, _) -> pid) nl)
 
-initNeeds :: String -> FilePath -> Rules [String]
-initNeeds profile cbilxml = do
-    needsList <- liftIO $ loadNeeds cbilxml
-    mkNeedsRules profile needsList
+initNeeds :: CbilConfiguration -> ProfileDefineList -> Rules CbilRulesInfo
+initNeeds configuration _ = do
+    needsList <- liftIO $ loadNeeds (cbilSettingsFile configuration)
+    mkNeedsRules (cbilProfile configuration) needsList
 
 -- Visual Studio -------------------
         
@@ -237,12 +248,15 @@ loadVisualStudios xmlFile = do
     trees <- runX (getVisualStudioListTrees xmlFile)
     return $ concat $ map (runLA mapToCbilVisualStudio) trees
 
-initVisualStudios :: String -> ProfileDefineList -> FilePath -> Rules [String]
-initVisualStudios profile profileDefines cbilxml = do
-    rawVisualStudiosList <- liftIO $ loadVisualStudios cbilxml
+
+initVisualStudios :: CbilConfiguration -> ProfileDefineList -> Rules CbilRulesInfo
+initVisualStudios configuration profileDefines = do
+    rawVisualStudiosList <- liftIO $ loadVisualStudios (cbilSettingsFile configuration)
     let
+        profile = (cbilProfile configuration)
         rawVisualStudiosForProfile = filter (\(_, p, _, _, _, _) -> p == profile) rawVisualStudiosList
-    mapM (mkVisualStudioRule . (mkVisualStudios profile profileDefines)) rawVisualStudiosForProfile
+    rules <- mapM (mkVisualStudioRule . (mkVisualStudios profile profileDefines)) rawVisualStudiosForProfile
+    return ("VisualStudioSolutionGroups", rules)
 
 mkVisualStudioRule :: VisualStudio -> Rules String
 mkVisualStudioRule (VisualStudio pid profile solutionPath solutionFile target configuration) = do
@@ -296,19 +310,21 @@ loadNetTiersGroups xmlFile = do
     trees <- runX (getNetTiersGroupsTrees xmlFile)
     return $ concat $ map (runLA mapToCbilNetTiersGroup) trees
 
-initNetTiersGroups :: String -> ProfileDefineList -> FilePath -> Rules [String]
-initNetTiersGroups profile profileDefines cbilxml = do
-    rawNetTiersGroupsList <- liftIO $ loadNetTiersGroups cbilxml
+initNetTiersGroups :: CbilConfiguration -> ProfileDefineList -> Rules CbilRulesInfo
+initNetTiersGroups configuration profileDefines = do
+    rawNetTiersGroupsList <- liftIO $ loadNetTiersGroups (cbilSettingsFile configuration)
     let
+        profile = (cbilProfile configuration)
         rawNetTiersGroupsForProfile = filter (\(_, p, _, _, _, _, _) -> p == profile) rawNetTiersGroupsList
-    mapM (mkNetTiersGroupRule . (mkNetTiersGroup profile profileDefines)) rawNetTiersGroupsForProfile
+    rules <- mapM (mkNetTiersGroupRule . (mkNetTiersGroup profile profileDefines)) rawNetTiersGroupsForProfile
+    return ("NetTiersGroups", rules)
 
 mkNetTiersGroupRule :: NetTiersGroup -> Rules String
 mkNetTiersGroupRule (NetTiersGroup netTiersGroupId pid netTiersPath nettiersTemplateLocation templatedb db nettiersdir) = do
     let        
         generateNettiers :: FilePath -> FilePath -> String -> String -> String -> Action ()
         generateNettiers netttiersPath nettiersTemplateLocation templatedb db nettiersdir = do
-            buildDir <- liftIO $ getCurrentDirectory
+            buildDir <- liftIO $ SD.getCurrentDirectory
             let
                 outputPath = buildDir </> nettiersdir
                 buildTemplatePath = outputPath </> "Build.xml"
@@ -332,7 +348,7 @@ mkNetTiersGroup profile profileDefines (netTiersGroupId, pid, netTiersPath', net
         nettiersdir = applyProfileDefines' nettiersdir'
     in NetTiersGroup netTiersGroupId pid netTiersPath nettiersTemplateLocation templatedb db nettiersdir
         
--- Extra helper function for NetTiers --
+-- Extra helper function for NetTiers ------------
 sed :: FilePath -> FilePath -> String -> String -> IO ()
 sed srcFile destFile replaceString withString = do
     f <- BS.readFile srcFile
@@ -341,66 +357,71 @@ sed srcFile destFile replaceString withString = do
     BSL.writeFile destFile updatedText
 -- Helper function END --
 
-main = shakeArgs shakeOptions{shakeFiles="_build"} $ do
+-- Cbil Help ---------------
+data Flags = ProfileOpt String | AltSettingsOpt String deriving Eq
 
-    let
-        profile = "prof1"
-        xmlpath = "example.xml"
-    want ["help"]
-
-    profDefines <- initProfileDefines profile xmlpath
-
-    phony "meme" $ do
-        putNormal $ show profDefines
-        putNormal $ applyProfileDefines profDefines "ABC%DatabaseName%DEF"
+flags = let
+        profileBuilder :: Maybe String -> Either String Flags
+        profileBuilder (Just p) = Right $ ProfileOpt p
+        profileBuilder Nothing = Left ""
         
-    cloneRuleNames <- initCloneProjects profile xmlpath
-    needsRuleNames <- initNeeds profile xmlpath
-    databaseGroupsRuleNames <- initDatabaseGroups profile profDefines xmlpath
-    visualStudioRuleNames <- initVisualStudios profile profDefines xmlpath
-    netTiersGroupsRuleNames <- initNetTiersGroups profile profDefines xmlpath
+        settingsFileBuilder :: Maybe String -> Either String Flags
+        settingsFileBuilder (Just s) = Right $ AltSettingsOpt s
+        settingsFileBuilder Nothing = Left ""
+    in [
+        Option "" ["profile"] (OptArg profileBuilder "PROFILE") "Select a profile."
+        , Option "" ["settings"] (OptArg settingsFileBuilder "FILE") "Select an alternative setting XML file."
+    ]
 
+getProfileOption :: [Flags] -> Maybe String
+getProfileOption (ProfileOpt p:_) = Just p
+getProfileOption (_:opts) = getProfileOption opts
+getProfileOption [] = Nothing
+        
+getAltSettingsOpt :: [Flags] -> Maybe String
+getAltSettingsOpt (AltSettingsOpt s:_) = Just s
+getAltSettingsOpt (_:opts) = getAltSettingsOpt opts
+getAltSettingsOpt [] = Nothing
+      
+cbilHelp :: CbilConfiguration -> ProfileDefineList -> [CbilRulesInfo] -> Rules ()
+cbilHelp configuration profileDefines ruleInfos = do
     phony "help" $ do
-        putNormal $ "cleantest, clone1 " ++ intercalate ", " cloneRuleNames ++ " : " ++ intercalate ", " needsRuleNames ++ " : " ++ intercalate ", " databaseGroupsRuleNames ++ " : " ++ intercalate ", " visualStudioRuleNames++ " : " ++ intercalate ", " netTiersGroupsRuleNames
+        putNormal $ "Settings file: " ++ (cbilSettingsFile configuration)
+        putNormal $ "Building with profile: " ++ (cbilProfile configuration)
+        putNormal "Available Targets:"
+        mapM_ (putNormal . (\(ruleGroup, rules) -> "\t" ++ ruleGroup ++ ": " ++ intercalate ", " rules)) ruleInfos
 
-    phony "cleantest" $ do
-        liftIO $ removeDirectoryRecursive "testRepos/buildArea/bob"
-        liftIO $ removeDirectoryRecursive "testRepos/buildArea/bob2"
-
-    phony "clone1" $ do
-        command_ [Cwd "testRepos/buildArea"] "git" ["clone", "--single-branch", "--branch", "master", "../teb", "bob"]
-        putNormal "clone1"
-    
-    phony "clone2" $ do
-        command_ [Cwd "testRepos/buildArea"] "git" ["clone", "--single-branch", "--branch", "master", "../teb", "bob2"]
-        putNormal "clone1"
+-- Cbil main -----------------------
+_cbilMain :: (CbilConfiguration -> ProfileDefineList -> Rules ()) -> IO ()
+_cbilMain userRules = shakeArgsWith shakeOptions flags $ \flags targets -> return $ Just $ do
         
     let
-        basewd = "c:\\Users\\DB_UpgradeScripts"
-        _dbdefine = "DB_43"
-        _sqlcmd wd dbname dbdefinename script = do
-            putNormal $ "Executing: " ++ script
-            command_ [Cwd wd, Shell] "sqlcmd" ["-S", ".", "-b", "-d", dbname, "-v", "DatabaseName="++dbdefinename, "-i", script]
-        
-    phony "jr_baselinedb" $ do
-        let
-            wd = basewd
-            sqlcmd = _sqlcmd wd "master" _dbdefine
-        sqlcmd "DropDB.sql"
-        sqlcmd "RestoreBaseline.sql"
+        profile = maybe "default" id (getProfileOption flags)
+        xmlpath = maybe "cbil.xml" id (getAltSettingsOpt flags)
+        configuration = CbilConfiguration profile xmlpath
 
-    phony "jr_allcp" $ do
-        let
-            wd = basewd
-            sqlcmd = _sqlcmd wd _dbdefine _dbdefine
-        sqlcmd "LocalAppConfig.sql"
-        sqlcmd "CP_0001.sql"
-        sqlcmd "CP_0002.sql"
-        sqlcmd "CP_0002_data_001.sql"
-        sqlcmd "CP_0003.sql"
-        
-    phony "ab_JR_43" $ do
-        let
-            wd = basewd <//> "LocalWork\\JR-43\\Current"
-            sqlcmd = _sqlcmd wd _dbdefine _dbdefine
-        sqlcmd "Update-XX-YY-001.publish.sql"
+    settingsExists <- liftIO $ SD.doesFileExist xmlpath
+    if settingsExists
+      then do
+        if null targets then want ["help"] else want targets
+        profileDefines <- initProfileDefines configuration
+        userRules configuration profileDefines
+      else do
+        want ["error"]
+        phony "error" $  putNormal ("ERROR: Settings file does not exist: " ++ xmlpath)
+
+-- main ------------------
+
+main :: IO ()
+main = _cbilMain $ (\configuration profileDefines -> do
+
+        -- build the module rules
+        cloneRulesInfo <- initCloneProjects configuration profileDefines
+        needsRulesInfo <- initNeeds configuration profileDefines
+        databaseGroupsRulesInfo <- initDatabaseGroups configuration profileDefines
+        visualStudioRulesInfo <- initVisualStudios configuration profileDefines
+        netTiersGroupsRulesInfo <- initNetTiersGroups configuration profileDefines
+
+        -- build the help rule
+        cbilHelp configuration profileDefines [cloneRulesInfo, needsRulesInfo, databaseGroupsRulesInfo, visualStudioRulesInfo, netTiersGroupsRulesInfo]
+    )
