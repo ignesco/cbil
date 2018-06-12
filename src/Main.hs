@@ -62,7 +62,13 @@ mkProfileDefines profile profiles = return $ lookup profile profiles
 initProfileDefines :: CbilConfiguration -> Rules ProfileDefineList
 initProfileDefines configuration = do
     profileDefines <- liftIO $ loadProfileDefines (cbilSettingsFile configuration)
-    mkProfileDefines (cbilProfile configuration) profileDefines
+    xmlDefines' <- mkProfileDefines (cbilProfile configuration) profileDefines
+    case xmlDefines' of
+        Just xmlDefines -> do
+            cwdDir <- liftIO $ SD.getCurrentDirectory
+            return $ Just (("%__CWD__%", cwdDir):xmlDefines)
+        Nothing -> return $ Nothing
+        
 
 applyProfileDefines :: ProfileDefineList -> String -> String
 applyProfileDefines Nothing str = str
@@ -329,15 +335,14 @@ mkNetTiersGroupRule normalRun (NetTiersGroup netTiersGroupId pid netTiersPath ne
     let        
         generateNettiers :: FilePath -> FilePath -> String -> String -> String -> Action ()
         generateNettiers netttiersPath nettiersTemplateLocation templatedb db nettiersdir = do
-            buildDir <- liftIO $ SD.getCurrentDirectory
             let
-                outputPath = buildDir </> nettiersdir
-                buildTemplatePath = outputPath </> "Build.xml"
-                buildGenericPath = outputPath </> "BuildGeneric.xml"
+                
+                buildTemplatePath = nettiersdir </> "Build.xml"
+                buildGenericPath = nettiersdir </> "BuildGeneric.xml"
             if normalRun
               then do
                 liftIO $ sed buildTemplatePath buildGenericPath ("database=" ++ templatedb) ("database=" ++ db)
-                cmd [Cwd netttiersPath, AddPath ["c:\\Program Files (x86)\\CodeSmith\\v3.2"] [] ] "cs.exe" ["/template:" ++ nettiersTemplateLocation, "/propertyset:" ++ buildGenericPath, "/property:OutputDirectory=" ++ outputPath]
+                cmd [Cwd netttiersPath, AddPath ["c:\\Program Files (x86)\\CodeSmith\\v3.2"] [] ] "cs.exe" ["/template:" ++ nettiersTemplateLocation, "/propertyset:" ++ buildGenericPath, "/property:OutputDirectory=" ++ nettiersdir]
               else
                 return ()
         

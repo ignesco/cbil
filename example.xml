@@ -30,14 +30,14 @@
           <nettiersTemplateLocation>%NETTIERSPATH%\NetTiers.cst</nettiersTemplateLocation>
           <templatedb>templateDB</templatedb>
           <db>THEDB</db>
-          <nettiersdir>NTDIR</nettiersdir>
+          <nettiersdir>%__CWD__%/NTDIR</nettiersdir>
       </netTiers>
       <netTiers id="jr_nettiers" profileid="prof1">
           <netTiersPath>%NETTIERSPATH%</netTiersPath>
           <nettiersTemplateLocation>%NETTIERSPATH%\NetTiers.cst</nettiersTemplateLocation>
           <templatedb>templateDB</templatedb>
           <db>THEDB2</db>
-          <nettiersdir>NTDIR</nettiersdir>
+          <nettiersdir>%__CWD__%/NTDIR</nettiersdir>
       </netTiers>
     </NetTiersGroups>
 
