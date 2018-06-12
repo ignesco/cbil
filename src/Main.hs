@@ -16,6 +16,8 @@ import Development.Shake.FilePath
 import Text.XML.HXT.Arrow.ReadDocument
 import Text.XML.HXT.Core
 import Text.XML.HXT.DOM.FormatXmlTree
+
+cbilVersion = "v1.0"
     
 documentRoot :: String -> IOSLA (XIOState s) a XmlTree
 documentRoot xml = readDocument [] xml >>> getChildren >>> hasName "cbil"
@@ -406,10 +408,17 @@ getDryRunOpt [] = Nothing
 cbilHelp :: CbilConfiguration -> ProfileDefineList -> [CbilRulesInfo] -> Rules ()
 cbilHelp configuration profileDefines ruleInfos = do
     phony "help" $ do
+        putNormal $ "cbil version (" ++ cbilVersion ++ ")"
         putNormal $ "Settings file: " ++ (cbilSettingsFile configuration)
         putNormal $ "Building with profile: " ++ (cbilProfile configuration)
         putNormal "Available Targets:"
+        putNormal $ "\tcbil version: _version"
         mapM_ (putNormal . (\(ruleGroup, rules) -> "\t" ++ ruleGroup ++ ": " ++ intercalate ", " rules)) ruleInfos
+
+versionRule :: Rules ()
+versionRule = do   
+    phony "_version" $ do
+        putNormal $ "cbil version : " ++ cbilVersion
 
 -- Cbil main -----------------------
 _cbilMain :: (CbilConfiguration -> ProfileDefineList -> Rules ()) -> IO ()
@@ -427,6 +436,7 @@ _cbilMain userRules = shakeArgsWith shakeOptions flags $ \flags targets -> retur
         if null targets then want ["help"] else want targets
         profileDefines <- initProfileDefines configuration
         userRules configuration profileDefines
+        versionRule
       else do
         want ["error"]
         phony "error" $  putNormal ("ERROR: Settings file does not exist: " ++ xmlpath)
