@@ -4,6 +4,8 @@ module Main where
 import Development.Shake
 import Data.Char
 import Data.List
+import Data.List.Split
+import Data.Maybe
 import qualified Data.ByteString.Search as BSS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL
@@ -26,7 +28,7 @@ documentRoot xml = readDocument [] xml >>> getChildren >>> hasName "cbil"
 data RunType = DryRun | NormalRun deriving (Eq)
         
 data CbilConfiguration = CbilConfiguration {
-        cbilProfile :: String
+        cbilProfileList :: [String]
         , cbilSettingsFile :: FilePath
         , cbilRunType :: RunType
     }
@@ -58,13 +60,15 @@ mapToCbilProfileDefines = let
         kvPairsTuples   <- listA (getChildren >>> hasName "define" >>> kvPairTuplesSelector) -< defines
         returnA -< (pid, map (\(k, v) -> (concat ["%",k, "%"], v)) kvPairsTuples)
 
-mkProfileDefines :: String -> ProfileDefines -> Rules ProfileDefineList
-mkProfileDefines profile profiles = return $ lookup profile profiles
+mkProfileDefines :: [String] -> ProfileDefines -> Rules ProfileDefineList
+mkProfileDefines profileList profiles = let
+        profileDefines = maybe Nothing (Just . concat ) $  sequence $ filter Data.Maybe.isJust $ map (flip lookup profiles) profileList
+   in return $ profileDefines
 
 initProfileDefines :: CbilConfiguration -> Rules ProfileDefineList
 initProfileDefines configuration = do
     profileDefines <- liftIO $ loadProfileDefines (cbilSettingsFile configuration)
-    xmlDefines' <- mkProfileDefines (cbilProfile configuration) profileDefines
+    xmlDefines' <- mkProfileDefines (cbilProfileList configuration) profileDefines
     case xmlDefines' of
         Just xmlDefines -> do
             cwdDir <- liftIO $ SD.getCurrentDirectory
@@ -77,7 +81,10 @@ applyProfileDefines Nothing str = str
 applyProfileDefines (Just defines) str = _applyProfileDefines defines str
     where
         _applyProfileDefines d s = foldr (\(k, v) a -> rep k v a) s d
-        rep replaceString withString str = map (chr . fromEnum) $ BSL.unpack $ BSS.replace (BS8.pack replaceString) (BS8.pack withString) (BS8.pack str)    
+        rep replaceString withString str = map (chr . fromEnum) $ BSL.unpack $ BSS.replace (BS8.pack replaceString) (BS8.pack withString) (BS8.pack str)
+
+profileInList :: String -> [String] -> Bool
+profileInList profile profileList = elem profile profileList
 
 -- DatabaseGroups ----------------------
 
@@ -125,10 +132,10 @@ initDatabaseGroups :: CbilConfiguration -> ProfileDefineList -> Rules CbilRulesI
 initDatabaseGroups configuration profileDefines = do
     rawDatabaseGroupsList <- liftIO $ loadDatabaseGroups (cbilSettingsFile configuration)
     let
-        profile = cbilProfile configuration
+        profileList = cbilProfileList configuration
         normalRun = cbilRunType configuration == NormalRun
-        rawDbGroupsForProfile = filter (\(p, _, _, _) -> p == profile) rawDatabaseGroupsList
-    rules <- mapM ((mkDatabaseGroupRule normalRun) . (mkDatabaseGroups profile profileDefines)) rawDbGroupsForProfile
+        rawDbGroupsForProfile = filter (\(p, _, _, _) -> profileInList p profileList) rawDatabaseGroupsList
+    rules <- mapM ((mkDatabaseGroupRule normalRun) . (mkDatabaseGroups profileList profileDefines)) rawDbGroupsForProfile
     return ("DatabaseGroups", rules)
 
 mkDatabaseGroupRule :: Bool -> DatabaseGroup -> Rules String
@@ -144,8 +151,8 @@ mkDatabaseGroupRule normalRun (DatabaseGroup pid databaseGroupId workingDirector
         mapM_ (mk_sqlcmd workingDirectory) scripts
     return databaseGroupId
 
-mkDatabaseGroups :: String -> ProfileDefineList -> RawDatabaseGroup -> DatabaseGroup
-mkDatabaseGroups profile profileDefines (pid, databaseGroupId, workingDirectory', scripts') = let
+mkDatabaseGroups :: [String] -> ProfileDefineList -> RawDatabaseGroup -> DatabaseGroup
+mkDatabaseGroups profileList profileDefines (pid, databaseGroupId, workingDirectory', scripts') = let
         
         applyProfileDefines' = applyProfileDefines profileDefines
         workingDirectory = applyProfileDefines' workingDirectory'
@@ -178,7 +185,7 @@ mapToCbilCloneProjects = proc tree -> do
 
 mkCloneRules :: CbilConfiguration -> [CloneProject] -> Rules CbilRulesInfo
 mkCloneRules config ps' = do
-    let ps = filter (\(_, prof, _, _, _, _) -> prof == (cbilProfile config))  ps'
+    let ps = filter (\(_, prof, _, _, _, _) -> profileInList prof (cbilProfileList config)) ps'
     rules <- mapM (mkCloneRule (cbilRunType config == NormalRun) ) ps
     return ("CloneProjects", rules)
         
@@ -221,7 +228,7 @@ mkNeedsRule normalRun (pid, _, nl') = do
 
 mkNeedsRules :: CbilConfiguration -> [NeedsList] -> Rules CbilRulesInfo
 mkNeedsRules config nl' = do
-    let nl = filter (\(_, prof, _ ) -> prof == (cbilProfile config) ) nl'
+    let nl = filter (\(_, prof, _ ) -> profileInList prof (cbilProfileList config) ) nl'
     mapM_ (mkNeedsRule (cbilRunType config == NormalRun)) nl
     return $ ("Needs", map (\(pid, _, _) -> pid) nl)
 
@@ -235,7 +242,7 @@ initNeeds configuration _ = do
 type RawVisualStudio = (String, String, String, String, String, String)
 data VisualStudio = VisualStudio {
         visualStudioId :: String
-        , visualStudioProfile :: String
+        , visualStudioProfile :: [String]
         , visualStudioSolutionPath :: FilePath
         , visualStudioSolutionFile :: String
         , visualStudioTarget :: String
@@ -264,10 +271,10 @@ initVisualStudios :: CbilConfiguration -> ProfileDefineList -> Rules CbilRulesIn
 initVisualStudios configuration profileDefines = do
     rawVisualStudiosList <- liftIO $ loadVisualStudios (cbilSettingsFile configuration)
     let
-        profile = cbilProfile configuration
+        profileList = cbilProfileList configuration
         normalRun = cbilRunType configuration == NormalRun
-        rawVisualStudiosForProfile = filter (\(_, p, _, _, _, _) -> p == profile) rawVisualStudiosList
-    rules <- mapM ((mkVisualStudioRule normalRun) . (mkVisualStudios profile profileDefines)) rawVisualStudiosForProfile
+        rawVisualStudiosForProfile = filter (\(_, p, _, _, _, _) -> profileInList p profileList) rawVisualStudiosList
+    rules <- mapM ((mkVisualStudioRule normalRun) . (mkVisualStudios profileList profileDefines)) rawVisualStudiosForProfile
     return ("VisualStudioSolutionGroups", rules)
 
 mkVisualStudioRule :: Bool -> VisualStudio -> Rules String
@@ -281,14 +288,14 @@ mkVisualStudioRule normalRun (VisualStudio pid profile solutionPath solutionFile
         _visualstudio solutionPath solutionFile target configuration
     return pid
 
-mkVisualStudios :: String -> ProfileDefineList -> RawVisualStudio -> VisualStudio
-mkVisualStudios profile profileDefines (pid, _, solutionPath', solutionFile', target', configuration') = let
+mkVisualStudios :: [String] -> ProfileDefineList -> RawVisualStudio -> VisualStudio
+mkVisualStudios profileList profileDefines (pid, _, solutionPath', solutionFile', target', configuration') = let
         applyProfileDefines' = applyProfileDefines profileDefines
         solutionPath = applyProfileDefines' solutionPath'
         solutionFile = applyProfileDefines' solutionFile'
         target = applyProfileDefines' target'
         configuration = applyProfileDefines' configuration'
-    in VisualStudio pid profile solutionPath solutionFile target configuration
+    in VisualStudio pid profileList solutionPath solutionFile target configuration
         
 -- NetTiers -------------------
 type RawNetTiersGroup = (String, String, String, String, String, String, FilePath)
@@ -326,10 +333,10 @@ initNetTiersGroups :: CbilConfiguration -> ProfileDefineList -> Rules CbilRulesI
 initNetTiersGroups configuration profileDefines = do
     rawNetTiersGroupsList <- liftIO $ loadNetTiersGroups (cbilSettingsFile configuration)
     let
-        profile = cbilProfile configuration
+        profileList = cbilProfileList configuration
         normalRun = cbilRunType configuration == NormalRun
-        rawNetTiersGroupsForProfile = filter (\(_, p, _, _, _, _, _) -> p == profile) rawNetTiersGroupsList
-    rules <- mapM ((mkNetTiersGroupRule normalRun) . (mkNetTiersGroup profile profileDefines)) rawNetTiersGroupsForProfile
+        rawNetTiersGroupsForProfile = filter (\(_, p, _, _, _, _, _) -> profileInList p profileList) rawNetTiersGroupsList
+    rules <- mapM ((mkNetTiersGroupRule normalRun) . (mkNetTiersGroup profileList profileDefines)) rawNetTiersGroupsForProfile
     return ("NetTiersGroups", rules)
 
 mkNetTiersGroupRule :: Bool -> NetTiersGroup -> Rules String
@@ -353,8 +360,8 @@ mkNetTiersGroupRule normalRun (NetTiersGroup netTiersGroupId pid netTiersPath ne
         generateNettiers netTiersPath nettiersTemplateLocation templatedb db nettiersdir
     return netTiersGroupId
         
-mkNetTiersGroup :: String -> ProfileDefineList -> RawNetTiersGroup -> NetTiersGroup
-mkNetTiersGroup profile profileDefines (netTiersGroupId, pid, netTiersPath', nettiersTemplateLocation', templatedb', db', nettiersdir') = let
+mkNetTiersGroup :: [String] -> ProfileDefineList -> RawNetTiersGroup -> NetTiersGroup
+mkNetTiersGroup profileList profileDefines (netTiersGroupId, pid, netTiersPath', nettiersTemplateLocation', templatedb', db', nettiersdir') = let
         
         applyProfileDefines' = applyProfileDefines profileDefines
         netTiersPath = applyProfileDefines' netTiersPath'
@@ -410,7 +417,7 @@ cbilHelp configuration profileDefines ruleInfos = do
     phony "help" $ do
         putNormal $ "cbil version (" ++ cbilVersion ++ ")"
         putNormal $ "Settings file: " ++ (cbilSettingsFile configuration)
-        putNormal $ "Building with profile: " ++ (cbilProfile configuration)
+        putNormal $ "Building with profile: " ++ show (cbilProfileList configuration)
         putNormal "Available Targets:"
         putNormal $ "\tcbil version: _version"
         mapM_ (putNormal . (\(ruleGroup, rules) -> "\t" ++ ruleGroup ++ ": " ++ intercalate ", " rules)) ruleInfos
@@ -425,10 +432,11 @@ _cbilMain :: (CbilConfiguration -> ProfileDefineList -> Rules ()) -> IO ()
 _cbilMain userRules = shakeArgsWith shakeOptions flags $ \flags targets -> return $ Just $ do
         
     let
-        profile = maybe "default" id (getProfileOption flags)
+        profileList' = maybe ["default"] (splitOn ",") (getProfileOption flags)
+        profileList = reverse profileList'
         xmlpath = maybe "cbil.xml" id (getAltSettingsOpt flags)
         runType = maybe NormalRun id (getDryRunOpt flags)
-        configuration = CbilConfiguration profile xmlpath runType
+        configuration = CbilConfiguration profileList xmlpath runType
 
     settingsExists <- liftIO $ SD.doesFileExist xmlpath
     if settingsExists

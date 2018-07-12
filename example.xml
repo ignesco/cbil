@@ -6,9 +6,27 @@
               <define name="WorkingDirectory">c:\Users\DBUpgradeScripts</define>
               <define name="NETTIERSPATH">d:\Projects\nettiers-2.3.0</define>
           </defines>
-        </profile>
+      </profile>
+
+      <profile profileid="profdbalt">
+          <defines>
+              <define name="DatabaseName">ALT_DBName</define>
+              <define name="WorkingDirectory">c:\Users\DBUpgradeScripts</define>
+              <define name="NETTIERSPATH">d:\ALTProjects\nettiers-2.3.0</define>
+          </defines>
+      </profile>
+      
+      <profile profileid="profdb">
+          <defines>
+              <define name="DatabaseName">XXDBNameXX</define>
+              <define name="WorkingDirectory">c:\Users\DBUpgradeScripts</define>
+              <define name="NETTIERSPATH">d:\Projects\nettiers-2.3.0</define>
+          </defines>
+      </profile>
+
+      
     </ProfileDefines>
-    
+
     <CloneProjects>
         <project id="teb" profileid = "prof1">
             <workingDirectory>testRepos/buildArea</workingDirectory>
@@ -57,6 +75,14 @@
     </VisualStudioSolutionGroups>
 
     <DatabaseGroups>
+      
+      <databaseGroup id="db" profileid="profdb">
+        <workingDirectory>%WorkingDirectory%</workingDirectory>
+        <scripts>
+            <script dname="master" dbdefinename="%DatabaseName%">DropDB.sql</script>
+            <script dname="master" dbdefinename="%DatabaseName%">RestoreBaseline.sql</script>
+        </scripts>
+      </databaseGroup>
       
       <databaseGroup id="jr_baselinedb" profileid="prof1">
         <workingDirectory>%WorkingDirectory%</workingDirectory>
