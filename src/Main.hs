@@ -19,19 +19,20 @@ import Text.XML.HXT.Arrow.ReadDocument
 import Text.XML.HXT.Core
 import Text.XML.HXT.DOM.FormatXmlTree
 
-cbilVersion = "v1.1"
+cbilVersion = "v1.2"
     
 documentRoot :: String -> IOSLA (XIOState s) a XmlTree
 documentRoot xml = readDocument [] xml >>> getChildren >>> hasName "cbil"
 
 -- Cbil data types -------------------
-data RunType = DryRun | NormalRun deriving (Eq)
+data RunType = DryRun | NormalRun deriving (Eq, Show)
         
 data CbilConfiguration = CbilConfiguration {
         cbilProfileList :: [String]
         , cbilSettingsFile :: FilePath
         , cbilRunType :: RunType
-    }
+        , showHiddenTargets :: Bool
+    } deriving (Show)
 
 type CbilRulesInfo = (String, [String])
 
@@ -381,7 +382,7 @@ sed srcFile destFile replaceString withString = do
 -- Helper function END --
 
 -- Cbil Help ---------------
-data Flags = ProfileOpt String | AltSettingsOpt String | RunFlag RunType deriving (Eq)
+data Flags = ProfileOpt String | AltSettingsOpt String | RunFlag RunType | ShowHiddenRules deriving (Eq)
 
 flags = let
         profileBuilder :: Maybe String -> Either String Flags
@@ -395,6 +396,7 @@ flags = let
         Option "" ["profile"] (OptArg profileBuilder "PROFILE") "Select a profile."
         , Option "" ["settings"] (OptArg settingsFileBuilder "FILE") "Select an alternative setting XML file."
         , Option "" ["dry-run"] (NoArg $ Right $ RunFlag DryRun) "Perform a dry run build."
+        , Option "" ["show-hidden-rules"] (NoArg $ Right $ ShowHiddenRules) "Show all hidden rules."
     ]
 
 getProfileOption :: [Flags] -> Maybe String
@@ -412,6 +414,15 @@ getDryRunOpt (RunFlag r:_) = Just r
 getDryRunOpt (_:opts) = getDryRunOpt opts
 getDryRunOpt [] = Nothing
 
+getHiddenRulesOpt :: [Flags] -> Maybe Bool
+getHiddenRulesOpt (ShowHiddenRules:_) = Just True
+getHiddenRulesOpt (_:opts) = getHiddenRulesOpt opts
+getHiddenRulesOpt [] = Nothing
+
+filterRules :: CbilConfiguration -> [String] -> [String]
+filterRules configuration rules =
+    if showHiddenTargets configuration then rules else filter (\s -> if length s > 0 then if head s == '_' then False else True else False) rules
+
 cbilHelp :: CbilConfiguration -> ProfileDefineList -> [CbilRulesInfo] -> Rules ()
 cbilHelp configuration profileDefines ruleInfos = do
     phony "help" $ do
@@ -420,7 +431,7 @@ cbilHelp configuration profileDefines ruleInfos = do
         putNormal $ "Building with profile: " ++ show (cbilProfileList configuration)
         putNormal "Available Targets:"
         putNormal $ "\tcbil version: _version"
-        mapM_ (putNormal . (\(ruleGroup, rules) -> "\t" ++ ruleGroup ++ ": " ++ intercalate ", " rules)) ruleInfos
+        mapM_ (putNormal . (\(ruleGroup, rules) -> "\t" ++ ruleGroup ++ ": " ++ intercalate ", " (filterRules configuration rules) )) ruleInfos
 
 versionRule :: Rules ()
 versionRule = do   
@@ -436,7 +447,8 @@ _cbilMain userRules = shakeArgsWith shakeOptions flags $ \flags targets -> retur
         profileList = reverse profileList'
         xmlpath = maybe "cbil.xml" id (getAltSettingsOpt flags)
         runType = maybe NormalRun id (getDryRunOpt flags)
-        configuration = CbilConfiguration profileList xmlpath runType
+        hiddenRules = maybe False id (getHiddenRulesOpt flags)
+        configuration = CbilConfiguration profileList xmlpath runType hiddenRules
 
     settingsExists <- liftIO $ SD.doesFileExist xmlpath
     if settingsExists

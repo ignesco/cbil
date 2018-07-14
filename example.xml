@@ -111,6 +111,11 @@
     </DatabaseGroups>
 
     <Needs>
+      <needsList id = "_all_hidden" profileid = "prof1">
+        <need>teb</need>
+        <need>teb2bb</need>
+      </needsList>
+      
       <needsList id = "all" profileid = "prof1">
         <need>teb</need>
         <need>teb2bb</need>
