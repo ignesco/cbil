@@ -1,0 +1,17 @@
+<cbil>
+    <ProfileDefines>
+      <profile profileid="prof2">
+          <defines>
+              <define name="PROF2_DEFINE">[A PROF2 DEFINE]</define>
+          </defines>
+      </profile>
+    </ProfileDefines>
+
+    <Needs>
+      <needsList id = "myneeds" profileid = "prof2">
+        <need>first_need</need>
+        <need>second_need</need>
+      </needsList>
+    </Needs>
+
+</cbil>

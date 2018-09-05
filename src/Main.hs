@@ -1,4 +1,4 @@
-{-# LANGUAGE Arrows,  NoMonomorphismRestriction #-}
+{-# LANGUAGE Arrows, NoMonomorphismRestriction #-}
 module Main where
 
 import Development.Shake
@@ -29,10 +29,18 @@ data RunType = DryRun | NormalRun deriving (Eq, Show)
         
 data CbilConfiguration = CbilConfiguration {
         cbilProfileList :: [String]
-        , cbilSettingsFile :: FilePath
+        , cbilSettingsFiles :: [FilePath]
         , cbilRunType :: RunType
         , showHiddenTargets :: Bool
     } deriving (Show)
+
+loadAllSettingsFiles' :: [FilePath] -> (String -> IO [a]) -> IO [a]
+loadAllSettingsFiles' files loader = do
+    load' <- mapM loader files
+    return $ concat load'
+
+loadAllSettingsFiles :: CbilConfiguration -> (String -> IO [a]) -> IO [a]
+loadAllSettingsFiles configuration loader = loadAllSettingsFiles' (cbilSettingsFiles configuration) loader
 
 type CbilRulesInfo = (String, [String])
 
@@ -63,19 +71,18 @@ mapToCbilProfileDefines = let
 
 mkProfileDefines :: [String] -> ProfileDefines -> Rules ProfileDefineList
 mkProfileDefines profileList profiles = let
-        profileDefines = maybe Nothing (Just . concat ) $  sequence $ filter Data.Maybe.isJust $ map (flip lookup profiles) profileList
+        profileDefines = maybe Nothing (Just . concat) $  sequence $ filter Data.Maybe.isJust $ map (flip lookup profiles) profileList
    in return $ profileDefines
 
 initProfileDefines :: CbilConfiguration -> Rules ProfileDefineList
 initProfileDefines configuration = do
-    profileDefines <- liftIO $ loadProfileDefines (cbilSettingsFile configuration)
+    profileDefines <- liftIO $ loadAllSettingsFiles configuration loadProfileDefines
     xmlDefines' <- mkProfileDefines (cbilProfileList configuration) profileDefines
     case xmlDefines' of
         Just xmlDefines -> do
             cwdDir <- liftIO $ SD.getCurrentDirectory
             return $ Just (("%__CWD__%", cwdDir):xmlDefines)
         Nothing -> return $ Nothing
-        
 
 applyProfileDefines :: ProfileDefineList -> String -> String
 applyProfileDefines Nothing str = str
@@ -131,7 +138,7 @@ mapToCbilDatabaseGroups = let
 
 initDatabaseGroups :: CbilConfiguration -> ProfileDefineList -> Rules CbilRulesInfo
 initDatabaseGroups configuration profileDefines = do
-    rawDatabaseGroupsList <- liftIO $ loadDatabaseGroups (cbilSettingsFile configuration)
+    rawDatabaseGroupsList <- liftIO $ loadAllSettingsFiles configuration loadDatabaseGroups
     let
         profileList = cbilProfileList configuration
         normalRun = cbilRunType configuration == NormalRun
@@ -199,7 +206,7 @@ mkCloneRule normalRun (pid, _, wd, rloc, br, lrname) = do
 
 initCloneProjects :: CbilConfiguration -> ProfileDefineList -> Rules CbilRulesInfo
 initCloneProjects configuration _ = do
-    cloneProjects <- liftIO $ loadCloneProjects (cbilSettingsFile configuration)
+    cloneProjects <- liftIO $ loadAllSettingsFiles configuration loadCloneProjects
     mkCloneRules configuration cloneProjects
 
 -- Needs --------------------
@@ -235,7 +242,7 @@ mkNeedsRules config nl' = do
 
 initNeeds :: CbilConfiguration -> ProfileDefineList -> Rules CbilRulesInfo
 initNeeds configuration _ = do
-    needsList <- liftIO $ loadNeeds (cbilSettingsFile configuration)
+    needsList <- liftIO $ loadAllSettingsFiles configuration loadNeeds
     mkNeedsRules configuration needsList
 
 -- Visual Studio -------------------
@@ -270,7 +277,7 @@ loadVisualStudios xmlFile = do
 
 initVisualStudios :: CbilConfiguration -> ProfileDefineList -> Rules CbilRulesInfo
 initVisualStudios configuration profileDefines = do
-    rawVisualStudiosList <- liftIO $ loadVisualStudios (cbilSettingsFile configuration)
+    rawVisualStudiosList <- liftIO $ loadAllSettingsFiles configuration loadVisualStudios
     let
         profileList = cbilProfileList configuration
         normalRun = cbilRunType configuration == NormalRun
@@ -332,7 +339,7 @@ loadNetTiersGroups xmlFile = do
 
 initNetTiersGroups :: CbilConfiguration -> ProfileDefineList -> Rules CbilRulesInfo
 initNetTiersGroups configuration profileDefines = do
-    rawNetTiersGroupsList <- liftIO $ loadNetTiersGroups (cbilSettingsFile configuration)
+    rawNetTiersGroupsList <- liftIO $ loadAllSettingsFiles configuration loadNetTiersGroups
     let
         profileList = cbilProfileList configuration
         normalRun = cbilRunType configuration == NormalRun
@@ -427,7 +434,7 @@ cbilHelp :: CbilConfiguration -> ProfileDefineList -> [CbilRulesInfo] -> Rules (
 cbilHelp configuration profileDefines ruleInfos = do
     phony "help" $ do
         putNormal $ "cbil version (" ++ cbilVersion ++ ")"
-        putNormal $ "Settings file: " ++ (cbilSettingsFile configuration)
+        putNormal $ "Settings file: " ++ (show . cbilSettingsFiles) configuration
         putNormal $ "Building with profile: " ++ show (cbilProfileList configuration)
         putNormal "Available Targets:"
         putNormal $ "\tcbil version: _version"
@@ -448,7 +455,7 @@ _cbilMain userRules = shakeArgsWith shakeOptions flags $ \flags targets -> retur
         xmlpath = maybe "cbil.xml" id (getAltSettingsOpt flags)
         runType = maybe NormalRun id (getDryRunOpt flags)
         hiddenRules = maybe False id (getHiddenRulesOpt flags)
-        configuration = CbilConfiguration profileList xmlpath runType hiddenRules
+        configuration = CbilConfiguration profileList [xmlpath, "example2.xml"] runType hiddenRules
 
     settingsExists <- liftIO $ SD.doesFileExist xmlpath
     if settingsExists
