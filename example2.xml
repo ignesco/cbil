@@ -14,4 +14,24 @@
       </needsList>
     </Needs>
 
+    <CloneProjects>
+        <project id="first_need" profileid = "prof2">
+            <workingDirectory>testRepos/buildArea</workingDirectory>
+            <repoLocation>../teb</repoLocation>
+            <branch>%CSHABC%</branch>
+            <localRepoName>bob</localRepoName>
+        </project>
+    </CloneProjects>
+
+    <NetTiersGroups>
+      <netTiers id="second_need" profileid="prof2">
+          <netTiersPath>%PROF2_DEFINE%</netTiersPath>
+          <nettiersTemplateLocation>%NETTIERSPATH%\NetTiers.cst</nettiersTemplateLocation>
+          <templatedb>templateDB</templatedb>
+          <db>THEDB</db>
+          <nettiersdir>%__CWD__%/NTDIR</nettiersdir>
+      </netTiers>
+    </NetTiersGroups>
+    
+        
 </cbil>

@@ -389,7 +389,7 @@ sed srcFile destFile replaceString withString = do
 -- Helper function END --
 
 -- Cbil Help ---------------
-data Flags = ProfileOpt String | AltSettingsOpt String | RunFlag RunType | ShowHiddenRules deriving (Eq)
+data Flags = ProfileOpt String | AltSettingsOpt String | RunFlag RunType | ShowHiddenRules | ExtraSettingsOpt String deriving (Eq)
 
 flags = let
         profileBuilder :: Maybe String -> Either String Flags
@@ -399,9 +399,14 @@ flags = let
         settingsFileBuilder :: Maybe String -> Either String Flags
         settingsFileBuilder (Just s) = Right $ AltSettingsOpt s
         settingsFileBuilder Nothing = Left ""
+        
+        extraSettingsFileBuilder :: Maybe String -> Either String Flags
+        extraSettingsFileBuilder (Just s) = Right $ ExtraSettingsOpt s
+        extraSettingsFileBuilder Nothing = Left ""
     in [
-        Option "" ["profile"] (OptArg profileBuilder "PROFILE") "Select a profile."
+        Option "" ["profile"] (OptArg profileBuilder "PROFILE") "Select a profile. (comma separated)"
         , Option "" ["settings"] (OptArg settingsFileBuilder "FILE") "Select an alternative setting XML file."
+        , Option "" ["extra-settings"] (OptArg extraSettingsFileBuilder "EXTRAFILE") "Select extra setting XML files to load. (comma separated)"
         , Option "" ["dry-run"] (NoArg $ Right $ RunFlag DryRun) "Perform a dry run build."
         , Option "" ["show-hidden-rules"] (NoArg $ Right $ ShowHiddenRules) "Show all hidden rules."
     ]
@@ -426,6 +431,11 @@ getHiddenRulesOpt (ShowHiddenRules:_) = Just True
 getHiddenRulesOpt (_:opts) = getHiddenRulesOpt opts
 getHiddenRulesOpt [] = Nothing
 
+getExtraSettingsOpt :: [Flags] -> Maybe String
+getExtraSettingsOpt (ExtraSettingsOpt s:_) = Just s
+getExtraSettingsOpt (_:opts) = getExtraSettingsOpt opts
+getExtraSettingsOpt [] = Nothing
+        
 filterRules :: CbilConfiguration -> [String] -> [String]
 filterRules configuration rules =
     if showHiddenTargets configuration then rules else filter (\s -> if length s > 0 then if head s == '_' then False else True else False) rules
@@ -434,7 +444,7 @@ cbilHelp :: CbilConfiguration -> ProfileDefineList -> [CbilRulesInfo] -> Rules (
 cbilHelp configuration profileDefines ruleInfos = do
     phony "help" $ do
         putNormal $ "cbil version (" ++ cbilVersion ++ ")"
-        putNormal $ "Settings file: " ++ (show . cbilSettingsFiles) configuration
+        putNormal $ "Settings files: " ++ (show . cbilSettingsFiles) configuration
         putNormal $ "Building with profile: " ++ show (cbilProfileList configuration)
         putNormal "Available Targets:"
         putNormal $ "\tcbil version: _version"
@@ -453,9 +463,10 @@ _cbilMain userRules = shakeArgsWith shakeOptions flags $ \flags targets -> retur
         profileList' = maybe ["default"] (splitOn ",") (getProfileOption flags)
         profileList = reverse profileList'
         xmlpath = maybe "cbil.xml" id (getAltSettingsOpt flags)
+        extraSettingsFiles = maybe [] (splitOn ",") (getExtraSettingsOpt flags)
         runType = maybe NormalRun id (getDryRunOpt flags)
         hiddenRules = maybe False id (getHiddenRulesOpt flags)
-        configuration = CbilConfiguration profileList [xmlpath, "example2.xml"] runType hiddenRules
+        configuration = CbilConfiguration profileList (concat [[xmlpath], extraSettingsFiles]) runType hiddenRules
 
     settingsExists <- liftIO $ SD.doesFileExist xmlpath
     if settingsExists
