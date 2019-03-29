@@ -1,4 +1,36 @@
 <cbil>
+    <MetaSettings>
+      <settings profileid="abc">
+        <profiles>
+          <profile>XYZ</profile>
+          <profile>PQR</profile>
+        </profiles>
+
+        <extraSettings>
+          <extraSettingsFile>example2.xml</extraSettingsFile>
+          <extraSettingsFile>example3.xml</extraSettingsFile>
+        </extraSettings>
+      </settings>
+
+      <settings profileid="def">
+        <profiles>
+          <profile>defXYZ</profile>
+          <profile>defPQR</profile>
+        </profiles>
+      </settings>
+    
+      <settings profileid="idid">
+        <profiles>
+          <profile>prof2</profile>
+        </profiles>
+
+        <extraSettings>
+          <extraSettingsFile>example2.xml</extraSettingsFile>
+        </extraSettings>
+      </settings>
+      
+    </MetaSettings>
+
     <ProfileDefines>
       <profile profileid="prof2">
           <defines>
@@ -8,7 +40,7 @@
     </ProfileDefines>
 
     <Needs>
-      <needsList id = "myneeds" profileid = "prof2">
+      <needsList id = "mysuperneeds" profileid = "prof2">
         <need>first_need</need>
         <need>second_need</need>
       </needsList>

@@ -19,7 +19,7 @@ import Text.XML.HXT.Arrow.ReadDocument
 import Text.XML.HXT.Core
 import Text.XML.HXT.DOM.FormatXmlTree
 
-cbilVersion = "v1.3"
+cbilVersion = "v1.4"
     
 documentRoot :: String -> IOSLA (XIOState s) a XmlTree
 documentRoot xml = readDocument [] xml >>> getChildren >>> hasName "cbil"
@@ -455,6 +455,33 @@ versionRule = do
     phony "_version" $ do
         putNormal $ "cbil version : " ++ cbilVersion
 
+getMetaSettingsTrees :: String -> IOSLA (XIOState s) a XmlTree
+getMetaSettingsTrees xml = documentRoot xml >>> getChildren >>> hasName "MetaSettings" >>> getChildren >>> hasName "settings"
+
+type RawMetaSettings = (String, [String], [FilePath])
+
+mapToCbilMetaSettings :: ArrowXml t => t XmlTree RawMetaSettings
+mapToCbilMetaSettings = let
+    in proc tree -> do
+        pid         <- getAttrValue "profileid" -< tree
+        profiles    <- listA (getChildren >>> hasName "profiles" >>> listA (getChildren >>> hasName "profile" >>> getChildren >>> getText)) -< tree
+        settings    <- listA (getChildren >>> hasName "extraSettings" >>> listA (getChildren >>> hasName "extraSettingsFile" >>> getChildren >>> getText)) -< tree
+        returnA -<  (pid, concat profiles, concat settings)
+        
+loadMetaSettings :: String -> IO [RawMetaSettings]
+loadMetaSettings xmlFile = do
+    trees <- runX (getMetaSettingsTrees xmlFile)
+    return $ concat $ map (runLA mapToCbilMetaSettings) trees
+
+filterMetaSettings :: [String] -> [RawMetaSettings] -> ([String], [FilePath])
+filterMetaSettings profileList fullMetaSettings = let
+        filteredRawMetaSettings = filter (\(p, pList, sList) -> profileInList p profileList) fullMetaSettings
+        (profiles', settings')  =unzip $  map (\(p, pList, sList) -> (pList, sList)) filteredRawMetaSettings
+    in (concat profiles', concat settings')
+
+getProfileSettingsGroups :: [String] -> [FilePath] -> IO ([String], [FilePath])
+getProfileSettingsGroups profiles files = return (profiles, files)
+
 -- Cbil main -----------------------
 _cbilMain :: (CbilConfiguration -> ProfileDefineList -> Rules ()) -> IO ()
 _cbilMain userRules = shakeArgsWith shakeOptions flags $ \flags targets -> return $ Just $ do
@@ -466,8 +493,16 @@ _cbilMain userRules = shakeArgsWith shakeOptions flags $ \flags targets -> retur
         extraSettingsFiles = maybe [] (splitOn ",") (getExtraSettingsOpt flags)
         runType = maybe NormalRun id (getDryRunOpt flags)
         hiddenRules = maybe False id (getHiddenRulesOpt flags)
-        configuration = CbilConfiguration profileList (concat [[xmlpath], extraSettingsFiles]) runType hiddenRules
+        allParameterSettingsFiles' = concat [[xmlpath], extraSettingsFiles]
 
+    metaSettings' <- liftIO $ mapM loadMetaSettings allParameterSettingsFiles'
+        
+    let
+        (mProfiles, mSettings) = filterMetaSettings profileList (concat metaSettings')
+        allProfileList = concat [profileList, mProfiles]
+        allParameterSettingsFiles = concat [allParameterSettingsFiles', mSettings]
+        configuration = CbilConfiguration allProfileList allParameterSettingsFiles runType hiddenRules
+        
     settingsExists <- liftIO $ SD.doesFileExist xmlpath
     if settingsExists
       then do
