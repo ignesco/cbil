@@ -3,7 +3,7 @@
       <profile profileid="prof1">
           <defines>
               <define name="DatabaseName">XXDBNameXX</define>
-              <define name="WorkingDirectory">c:\Users\DBUpgradeScripts</define>
+              <define name="WorkingDirectory">.</define>
               <define name="NETTIERSPATH">d:\Projects\nettiers-2.3.0</define>
           </defines>
       </profile>
@@ -11,7 +11,7 @@
       <profile profileid="profdbalt">
           <defines>
               <define name="DatabaseName">ALT_DBName</define>
-              <define name="WorkingDirectory">c:\Users\DBUpgradeScripts</define>
+              <define name="WorkingDirectory">.</define>
               <define name="NETTIERSPATH">d:\ALTProjects\nettiers-2.3.0</define>
           </defines>
       </profile>
@@ -19,7 +19,7 @@
       <profile profileid="profdb">
           <defines>
               <define name="DatabaseName">XXDBNameXX</define>
-              <define name="WorkingDirectory">c:\Users\DBUpgradeScripts</define>
+              <define name="WorkingDirectory">.</define>
               <define name="NETTIERSPATH">d:\Projects\nettiers-2.3.0</define>
           </defines>
       </profile>
@@ -74,8 +74,27 @@
       </visualStudioSolutionGroup>
     </VisualStudioSolutionGroups>
 
+
+
+    
+    <IncrementalDatabaseGroups>
+      <databaseGroup id="incjr_allcp" profileid="prof1">
+        <workingDirectory>%WorkingDirectory%</workingDirectory>
+        <databaseInfo dbname="%DatabaseName%" />
+        <scripts>
+            <script>mainline/LocalAC.sql</script>
+            <script>mainline/CP_0001.sql</script>
+            <script>mainline/CP_0002.sql</script>
+            <script>mainline/CP_0003.sql</script>
+        </scripts>
+      </databaseGroup>
+    </IncrementalDatabaseGroups>
+
+
+
+    
+    
     <DatabaseGroups>
-      
       <databaseGroup id="db" profileid="profdb">
         <workingDirectory>%WorkingDirectory%</workingDirectory>
         <scripts>

@@ -1,5 +1,21 @@
 {-# LANGUAGE Arrows, NoMonomorphismRestriction #-}
-module Main where
+module CbilLib
+(
+    cbilVersion
+    , DBInit(..)
+    , ScriptExecuted(..)
+    , DBCacheInitialiser(..)
+    , _cbilMain
+    , touch
+    , initCloneProjects
+    , initNeeds
+    , initDatabaseGroups
+    , initIncrementalDatabaseGroups
+    , initVisualStudios
+    , initNetTiersGroups
+    , cbilHelp
+)
+where
 
 import Development.Shake
 import Data.Char
@@ -10,6 +26,7 @@ import qualified Data.ByteString.Search as BSS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString as BS
+import qualified Data.Set as DS
 
 import System.Console.GetOpt
 import qualified System.Directory as SD
@@ -19,7 +36,7 @@ import Text.XML.HXT.Arrow.ReadDocument
 import Text.XML.HXT.Core
 import Text.XML.HXT.DOM.FormatXmlTree
 
-cbilVersion = "v1.4"
+cbilVersion = "v1.5"
     
 documentRoot :: String -> IOSLA (XIOState s) a XmlTree
 documentRoot xml = readDocument [] xml >>> getChildren >>> hasName "cbil"
@@ -149,25 +166,147 @@ initDatabaseGroups configuration profileDefines = do
 mkDatabaseGroupRule :: Bool -> DatabaseGroup -> Rules String
 mkDatabaseGroupRule normalRun (DatabaseGroup pid databaseGroupId workingDirectory scripts) = do
     let
-        _sqlcmd wd dbname dbdefinename scriptname = do
-            putNormal $ "Executing sqlcmd: " ++ intercalate ", " ["id: "++databaseGroupId, "wd: "++wd, "dbname: "++dbname, "dbdefinename :"++dbdefinename, "scriptname: "++scriptname]
-            if normalRun then command_ [Cwd wd, Shell] "sqlcmd" ["-S", ".", "-b", "-d", dbname, "-v", "DatabaseName="++dbdefinename, "-i", scriptname] else return ()
-
-        mk_sqlcmd wd script = _sqlcmd wd (dbname script) (dbdefinename script) (scriptname script)
+        mk_sqlcmd wd script = _sqlcmd normalRun wd databaseGroupId (dbname script) (dbdefinename script) (scriptname script)
         
     phony databaseGroupId $ do
         mapM_ (mk_sqlcmd workingDirectory) scripts
     return databaseGroupId
 
 mkDatabaseGroups :: [String] -> ProfileDefineList -> RawDatabaseGroup -> DatabaseGroup
-mkDatabaseGroups profileList profileDefines (pid, databaseGroupId, workingDirectory', scripts') = let
-        
+mkDatabaseGroups profileList profileDefines (pid, databaseGroupId, workingDirectory', scripts') =
+    let
         applyProfileDefines' = applyProfileDefines profileDefines
         workingDirectory = applyProfileDefines' workingDirectory'
         scripts = map (\(dbname', dbdefinename', scriptname') -> DatabaseGroupScript (applyProfileDefines' dbname') (applyProfileDefines' dbdefinename') (applyProfileDefines' scriptname') ) scripts'
     
     in DatabaseGroup pid databaseGroupId workingDirectory scripts
-                
+
+
+-- IncrementalDatabaseGroups ----------------------
+data IncrementalScript = IncrementalDatabaseGroupScript {
+        incscriptname :: String
+    }
+    deriving (Show)
+
+data IncrementalDatabaseGroup = IncrementalDatabaseGroup {
+            incdatabaseGroupProfileId :: String
+            , incdatabaseGroupId :: String
+            , incworkingDirectory :: FilePath
+            , incdbname :: String
+            , incscripts :: [IncrementalScript]
+        }
+        deriving (Show)
+
+type IncrementalDatabaseGroups = [IncrementalDatabaseGroup]
+type RawIncrementalDatabaseGroup = (String, String, FilePath, String, [String])
+type DBInit = FilePath -> String -> String -> Action (Maybe [(String, FilePath)])
+type ScriptExecuted = Bool -> String -> FilePath -> String -> Action Bool
+data DBCacheInitialiser = UserDBCache {
+        dbInit :: DBInit
+        , scriptExecuted :: ScriptExecuted
+    }
+        
+initIncrementalDatabaseGroups :: CbilConfiguration -> ProfileDefineList -> DBCacheInitialiser -> Rules CbilRulesInfo
+initIncrementalDatabaseGroups configuration profileDefines initialiaseDBCache = do
+    rawIncrementalDatabaseGroupsList <- liftIO $ loadAllSettingsFiles configuration loadIncrementalDatabaseGroups
+    let
+        profileList = cbilProfileList configuration
+        normalRun = cbilRunType configuration == NormalRun
+        rawIncrementalDatabaseGroupsForProfile = filter (\(p, _, _, _, _) -> profileInList p profileList) rawIncrementalDatabaseGroupsList
+    rules <- mapM ((mkIncrementalDatabaseGroupRule normalRun initialiaseDBCache) . (mkIncrementalDatabaseGroups profileList profileDefines)) rawIncrementalDatabaseGroupsForProfile
+    return ("IncrementalDatabaseGroups", rules)
+
+getIncrementalDatabaseGroupsTrees :: String -> IOSLA (XIOState s) a XmlTree
+getIncrementalDatabaseGroupsTrees xml = documentRoot xml >>> getChildren >>> hasName "IncrementalDatabaseGroups" >>> getChildren >>> hasName "databaseGroup"
+
+loadIncrementalDatabaseGroups :: String -> IO [RawIncrementalDatabaseGroup]
+loadIncrementalDatabaseGroups xmlFile = do
+    trees <- runX (getIncrementalDatabaseGroupsTrees xmlFile)
+    return $ concat $ map (runLA mapToCbilIncrementalDatabaseGroups) trees
+
+mapToCbilIncrementalDatabaseGroups :: ArrowXml t => t XmlTree RawIncrementalDatabaseGroup
+mapToCbilIncrementalDatabaseGroups = proc tree -> do
+    pid                 <- getAttrValue "profileid" -< tree
+    databaseGroupId     <- getAttrValue "id" -< tree
+    workingDirectory    <- getChildren >>> hasName "workingDirectory" >>> getChildren >>> getText -< tree
+    dbname              <- getChildren >>> hasName "databaseInfo" >>> getAttrValue "dbname" -< tree
+    scripts             <- getChildren >>> hasName "scripts" >>> listA (getChildren >>> hasName "script" >>> getChildren >>> getText) -< tree
+
+    returnA -<  (pid, databaseGroupId, workingDirectory, dbname, scripts)
+
+getRunFile :: FilePath -> String -> String -> String -> FilePath
+getRunFile runFileDirectory fp databaseGroupId dbname = runFileDirectory </> (intercalate "." [fp,databaseGroupId, dbname, "run"] )
+        
+mkIncrementalDatabaseGroupRule :: Bool -> DBCacheInitialiser -> IncrementalDatabaseGroup -> Rules String
+mkIncrementalDatabaseGroupRule normalRun initialiaseDBCache (IncrementalDatabaseGroup pid databaseGroupId workingDirectory dbname scripts) = do
+    let
+        wd = splitDirectories workingDirectory
+        containsDotDot = length (filter (=="..") wd) > 0
+        
+        runFileDirectory = normalise $ "_build_cbil" </> workingDirectory </> databaseGroupId </> dbname
+        dbcache = runFileDirectory </> (databaseGroupId ++ "." ++ dbname ++ ".dbcache.info")
+        deleteDirectory path = do
+            exists <- doesDirectoryExist path
+            if exists then liftIO $ SD.removeDirectoryRecursive path else return ()
+
+    phony databaseGroupId $ 
+        if containsDotDot
+          then putNormal $ "ERROR Working Directory cannot contain '..':" ++ workingDirectory
+          else do
+            putNormal $ "INCREMENTAL: " ++ databaseGroupId
+            let
+                needs' = map (\(IncrementalDatabaseGroupScript sql') -> getRunFile runFileDirectory sql' databaseGroupId dbname) scripts
+
+            deleteDirectory runFileDirectory
+            need [dbcache]
+            need $ reverse needs'
+
+    mkDbCacheRule dbcache runFileDirectory databaseGroupId dbname initialiaseDBCache
+    mkRunRule normalRun runFileDirectory databaseGroupId workingDirectory dbname initialiaseDBCache
+        
+    return databaseGroupId
+
+mkDbCacheRule :: String -> FilePath -> String -> String -> DBCacheInitialiser -> Rules ()
+mkDbCacheRule dbcache runFileDirectory databaseGroupId dbname initialiaseDBCache =
+    dbcache %> \out -> do
+        files' <- (dbInit initialiaseDBCache) runFileDirectory databaseGroupId dbname
+        case files' of
+            Just files -> do
+                let fs = map (\(g, f) -> getRunFile runFileDirectory f g dbname) files
+                mapM_ touch fs
+                produces fs
+                touch out
+            Nothing -> return ()
+
+mkRunRule :: Bool -> FilePath -> String -> String -> String -> DBCacheInitialiser -> Rules ()
+mkRunRule normalRun runFileDirectory databaseGroupId workingDirectory dbname initialiaseDBCache = do
+    let
+        runSuffix = intercalate "." [databaseGroupId, dbname, "run"]
+        extractScriptName suffix target = drop (length (runFileDirectory) + 1 ) (take (length target - length suffix - 1) target)
+        mk_sqlcmd dbname wd script = _sqlcmd normalRun wd databaseGroupId dbname dbname script
+        
+    ("**/*." ++ runSuffix) %> \out -> do
+        let scriptName = extractScriptName runSuffix out
+        exists <- doesFileExist out
+        if exists
+          then do
+            putNormal $ concat ["SKIPPING: workingDirectory: ", workingDirectory, " ", "dbname: ", dbname, " ", "dbdefinename: ", dbname, " ", "scriptName: ", scriptName]
+            touch out
+          else do
+            mk_sqlcmd dbname workingDirectory scriptName
+            ok <- (scriptExecuted initialiaseDBCache) normalRun databaseGroupId scriptName dbname
+            if ok then touch out else return ()
+        
+mkIncrementalDatabaseGroups :: [String] -> ProfileDefineList -> RawIncrementalDatabaseGroup -> IncrementalDatabaseGroup
+mkIncrementalDatabaseGroups profileList profileDefines (pid, databaseGroupId, workingDirectory', dbname', scripts') =
+    let
+        applyProfileDefines' = applyProfileDefines profileDefines
+        workingDirectory = applyProfileDefines' workingDirectory'
+        dbname = applyProfileDefines' dbname'
+        scripts = map (\(scriptname') -> IncrementalDatabaseGroupScript (applyProfileDefines' scriptname') ) scripts'
+    
+    in IncrementalDatabaseGroup pid databaseGroupId workingDirectory dbname scripts
+
 -- CloneProjects ----------------------
 
 type CloneProject = (String, String, String, String, String, String)
@@ -187,7 +326,7 @@ mapToCbilCloneProjects = proc tree -> do
     wd      <- getChildren >>> hasName "workingDirectory" >>> getChildren >>> getText -< tree
     rloc    <- getChildren >>> hasName "repoLocation" >>> getChildren >>> getText -< tree
     br      <- getChildren >>> hasName "branch" >>> getChildren >>> getText -< tree
-    lrname   <- getChildren >>> hasName "localRepoName" >>> getChildren >>> getText -< tree
+    lrname  <- getChildren >>> hasName "localRepoName" >>> getChildren >>> getText -< tree
 
     returnA -< (pid, profid, wd, rloc, br, lrname)
 
@@ -379,13 +518,32 @@ mkNetTiersGroup profileList profileDefines (netTiersGroupId, pid, netTiersPath',
         nettiersdir = applyProfileDefines' nettiersdir'
     in NetTiersGroup netTiersGroupId pid netTiersPath nettiersTemplateLocation templatedb db nettiersdir
         
--- Extra helper function for NetTiers ------------
+-- Extra helper function for general use ------------
 sed :: FilePath -> FilePath -> String -> String -> IO ()
 sed srcFile destFile replaceString withString = do
     f <- BS.readFile srcFile
     let
         updatedText = BSS.replace (BS8.pack replaceString) (BS8.pack withString) f
     BSL.writeFile destFile updatedText
+
+_sqlcmd :: Bool -> FilePath -> String -> String -> String -> String -> Action ()
+_sqlcmd normalRun wd databaseGroupId dbname dbdefinename scriptname = do
+    let header title = putNormal $ title ++ intercalate ", " ["id: "++databaseGroupId, "wd: "++wd, "dbname: "++dbname, "dbdefinename: "++dbdefinename, "scriptname: "++scriptname]
+    if normalRun
+      then do
+        header "Executing sqlcmd: "
+        command_ [Cwd wd, Shell] "sqlcmd" ["-S", ".", "-b", "-d", dbname, "-v", "DatabaseName="++dbdefinename, "-i", scriptname]
+      else header "skipping sqlcmd: "
+
+touch' :: FilePath -> IO ()
+touch' fp = do
+    SD.createDirectoryIfMissing True $ takeDirectory fp
+    appendFile fp ""
+        
+touch :: FilePath -> Action ()
+touch fp = do
+    liftIO $ touch' fp
+
 -- Helper function END --
 
 -- Cbil Help ---------------
@@ -513,19 +671,3 @@ _cbilMain userRules = shakeArgsWith shakeOptions flags $ \flags targets -> retur
       else do
         want ["error"]
         phony "error" $  putNormal ("ERROR: Settings file does not exist: " ++ xmlpath)
-
--- main ------------------
-
-main :: IO ()
-main = _cbilMain $ (\configuration profileDefines -> do
-
-        -- build the module rules
-        cloneRulesInfo <- initCloneProjects configuration profileDefines
-        needsRulesInfo <- initNeeds configuration profileDefines
-        databaseGroupsRulesInfo <- initDatabaseGroups configuration profileDefines
-        visualStudioRulesInfo <- initVisualStudios configuration profileDefines
-        netTiersGroupsRulesInfo <- initNetTiersGroups configuration profileDefines
-
-        -- build the help rule
-        cbilHelp configuration profileDefines [cloneRulesInfo, needsRulesInfo, databaseGroupsRulesInfo, visualStudioRulesInfo, netTiersGroupsRulesInfo]
-    )
