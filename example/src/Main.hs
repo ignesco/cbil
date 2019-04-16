@@ -9,7 +9,7 @@ import Data.Char
 
 tempCacheFilePath = "."
 userDbInit :: DBInit
-userDbInit baseDirectory databaseGroupId dbname = do
+userDbInit baseDirectory databaseGroupId servername dbname = do
     let cacheFile = (tempCacheFilePath </> ("dbcache." ++ dbname))
     putNormal $ "DBINIT:" ++ cacheFile
     (Exit c, Stdout sout) <- cmd $ "cat " ++ cacheFile
@@ -23,7 +23,7 @@ userDbInit baseDirectory databaseGroupId dbname = do
     return (Just ls)
 
 userScriptExecuted :: ScriptExecuted
-userScriptExecuted normalRun group script dbname = do
+userScriptExecuted normalRun group script servername dbname = do
     putNormal $ "DB insert:" ++ dbname ++ ">" ++ group ++ "!" ++ script
     liftIO $ appendFile (tempCacheFilePath </> ("dbcache." ++ dbname)) ("X!" ++ group ++ "!" ++ script ++ "\r\n")  
     return True

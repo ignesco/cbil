@@ -124,12 +124,13 @@ data DatabaseGroup = DatabaseGroup {
             databaseGroupProfileId :: String
             , databaseGroupId :: String
             , workingDirectory :: FilePath
+            , serverName :: Maybe String
             , scripts :: [Script]
         }
         deriving (Show)
 
 type DatabaseGroups = [DatabaseGroup]
-type RawDatabaseGroup = (String, String, FilePath, [(String, String, String)])
+type RawDatabaseGroup = (String, String, FilePath, Maybe String, [(String, String, String)])
         
 getDatabaseGroupsTrees :: String -> IOSLA (XIOState s) a XmlTree
 getDatabaseGroupsTrees xml = documentRoot xml >>> getChildren >>> hasName "DatabaseGroups" >>> getChildren >>> hasName "databaseGroup"
@@ -149,9 +150,11 @@ mapToCbilDatabaseGroups = let
         pid                 <- getAttrValue "profileid" -< tree
         databaseGroupId     <- getAttrValue "id" -< tree
         workingDirectory    <- getChildren >>> hasName "workingDirectory" >>> getChildren >>> getText -< tree
+        serverName'         <- listA (getChildren >>> hasName "serverName" >>> getChildren >>> getText) -< tree
         scripts             <- getChildren >>> hasName "scripts" >>> listA (getChildren >>> hasName "script" >>> scriptTuplesSelector) -< tree
+        let serverName = if length serverName' == 1 then Just (head serverName') else Nothing
         
-        returnA -<  (pid, databaseGroupId, workingDirectory, scripts)
+        returnA -<  (pid, databaseGroupId, workingDirectory, serverName, scripts)
 
 initDatabaseGroups :: CbilConfiguration -> ProfileDefineList -> Rules CbilRulesInfo
 initDatabaseGroups configuration profileDefines = do
@@ -159,27 +162,28 @@ initDatabaseGroups configuration profileDefines = do
     let
         profileList = cbilProfileList configuration
         normalRun = cbilRunType configuration == NormalRun
-        rawDbGroupsForProfile = filter (\(p, _, _, _) -> profileInList p profileList) rawDatabaseGroupsList
+        rawDbGroupsForProfile = filter (\(p, _, _, _, _) -> profileInList p profileList) rawDatabaseGroupsList
     rules <- mapM ((mkDatabaseGroupRule normalRun) . (mkDatabaseGroups profileList profileDefines)) rawDbGroupsForProfile
     return ("DatabaseGroups", rules)
 
 mkDatabaseGroupRule :: Bool -> DatabaseGroup -> Rules String
-mkDatabaseGroupRule normalRun (DatabaseGroup pid databaseGroupId workingDirectory scripts) = do
+mkDatabaseGroupRule normalRun (DatabaseGroup pid databaseGroupId workingDirectory servername scripts) = do
     let
-        mk_sqlcmd wd script = _sqlcmd normalRun wd databaseGroupId (dbname script) (dbdefinename script) (scriptname script)
+        mk_sqlcmd wd script = _sqlcmd normalRun wd databaseGroupId servername (dbname script) (dbdefinename script) (scriptname script)
         
     phony databaseGroupId $ do
         mapM_ (mk_sqlcmd workingDirectory) scripts
     return databaseGroupId
 
 mkDatabaseGroups :: [String] -> ProfileDefineList -> RawDatabaseGroup -> DatabaseGroup
-mkDatabaseGroups profileList profileDefines (pid, databaseGroupId, workingDirectory', scripts') =
+mkDatabaseGroups profileList profileDefines (pid, databaseGroupId, workingDirectory', servername', scripts') =
     let
         applyProfileDefines' = applyProfileDefines profileDefines
         workingDirectory = applyProfileDefines' workingDirectory'
+        servername = fmap applyProfileDefines' servername'
         scripts = map (\(dbname', dbdefinename', scriptname') -> DatabaseGroupScript (applyProfileDefines' dbname') (applyProfileDefines' dbdefinename') (applyProfileDefines' scriptname') ) scripts'
     
-    in DatabaseGroup pid databaseGroupId workingDirectory scripts
+    in DatabaseGroup pid databaseGroupId workingDirectory servername scripts
 
 
 -- IncrementalDatabaseGroups ----------------------
@@ -192,15 +196,16 @@ data IncrementalDatabaseGroup = IncrementalDatabaseGroup {
             incdatabaseGroupProfileId :: String
             , incdatabaseGroupId :: String
             , incworkingDirectory :: FilePath
+            , incservername :: Maybe String
             , incdbname :: String
             , incscripts :: [IncrementalScript]
         }
         deriving (Show)
 
 type IncrementalDatabaseGroups = [IncrementalDatabaseGroup]
-type RawIncrementalDatabaseGroup = (String, String, FilePath, String, [String])
-type DBInit = FilePath -> String -> String -> Action (Maybe [(String, FilePath)])
-type ScriptExecuted = Bool -> String -> FilePath -> String -> Action Bool
+type RawIncrementalDatabaseGroup = (String, String, FilePath, Maybe String, String, [String])
+type DBInit = FilePath -> String -> Maybe String ->String -> Action (Maybe [(String, FilePath)])
+type ScriptExecuted = Bool -> String -> FilePath -> Maybe String -> String -> Action Bool
 data DBCacheInitialiser = UserDBCache {
         dbInit :: DBInit
         , scriptExecuted :: ScriptExecuted
@@ -212,7 +217,7 @@ initIncrementalDatabaseGroups configuration profileDefines initialiaseDBCache = 
     let
         profileList = cbilProfileList configuration
         normalRun = cbilRunType configuration == NormalRun
-        rawIncrementalDatabaseGroupsForProfile = filter (\(p, _, _, _, _) -> profileInList p profileList) rawIncrementalDatabaseGroupsList
+        rawIncrementalDatabaseGroupsForProfile = filter (\(p, _, _, _, _, _) -> profileInList p profileList) rawIncrementalDatabaseGroupsList
     rules <- mapM ((mkIncrementalDatabaseGroupRule normalRun initialiaseDBCache) . (mkIncrementalDatabaseGroups profileList profileDefines)) rawIncrementalDatabaseGroupsForProfile
     return ("IncrementalDatabaseGroups", rules)
 
@@ -230,15 +235,17 @@ mapToCbilIncrementalDatabaseGroups = proc tree -> do
     databaseGroupId     <- getAttrValue "id" -< tree
     workingDirectory    <- getChildren >>> hasName "workingDirectory" >>> getChildren >>> getText -< tree
     dbname              <- getChildren >>> hasName "databaseInfo" >>> getAttrValue "dbname" -< tree
+    servername'         <- getChildren >>> hasName "databaseInfo" >>> getAttrValue "servername" -< tree
     scripts             <- getChildren >>> hasName "scripts" >>> listA (getChildren >>> hasName "script" >>> getChildren >>> getText) -< tree
 
-    returnA -<  (pid, databaseGroupId, workingDirectory, dbname, scripts)
+    let servername = if length servername' == 0 then Nothing else Just servername'
+    returnA -<  (pid, databaseGroupId, workingDirectory, servername, dbname, scripts)
 
 getRunFile :: FilePath -> String -> String -> String -> FilePath
 getRunFile runFileDirectory fp databaseGroupId dbname = runFileDirectory </> (intercalate "." [fp,databaseGroupId, dbname, "run"] )
         
 mkIncrementalDatabaseGroupRule :: Bool -> DBCacheInitialiser -> IncrementalDatabaseGroup -> Rules String
-mkIncrementalDatabaseGroupRule normalRun initialiaseDBCache (IncrementalDatabaseGroup pid databaseGroupId workingDirectory dbname scripts) = do
+mkIncrementalDatabaseGroupRule normalRun initialiaseDBCache (IncrementalDatabaseGroup pid databaseGroupId workingDirectory servername dbname scripts) = do
     let
         wd = splitDirectories workingDirectory
         containsDotDot = length (filter (=="..") wd) > 0
@@ -261,15 +268,15 @@ mkIncrementalDatabaseGroupRule normalRun initialiaseDBCache (IncrementalDatabase
             need [dbcache]
             mapM_ (need . (:[]))  needs'
 
-    mkDbCacheRule dbcache runFileDirectory databaseGroupId dbname initialiaseDBCache
-    mkRunRule normalRun runFileDirectory databaseGroupId workingDirectory dbname initialiaseDBCache
+    mkDbCacheRule dbcache runFileDirectory databaseGroupId servername dbname initialiaseDBCache
+    mkRunRule normalRun runFileDirectory databaseGroupId workingDirectory servername dbname initialiaseDBCache
         
     return databaseGroupId
 
-mkDbCacheRule :: String -> FilePath -> String -> String -> DBCacheInitialiser -> Rules ()
-mkDbCacheRule dbcache runFileDirectory databaseGroupId dbname initialiaseDBCache =
+mkDbCacheRule :: String -> FilePath -> String -> Maybe String -> String -> DBCacheInitialiser -> Rules ()
+mkDbCacheRule dbcache runFileDirectory databaseGroupId servername dbname initialiaseDBCache =
     dbcache %> \out -> do
-        files' <- (dbInit initialiaseDBCache) runFileDirectory databaseGroupId dbname
+        files' <- (dbInit initialiaseDBCache) runFileDirectory databaseGroupId servername dbname
         case files' of
             Just files -> do
                 let fs = map (\(g, f) -> getRunFile runFileDirectory f g dbname) files
@@ -278,34 +285,36 @@ mkDbCacheRule dbcache runFileDirectory databaseGroupId dbname initialiaseDBCache
                 touch out
             Nothing -> return ()
 
-mkRunRule :: Bool -> FilePath -> String -> String -> String -> DBCacheInitialiser -> Rules ()
-mkRunRule normalRun runFileDirectory databaseGroupId workingDirectory dbname initialiaseDBCache = do
+mkRunRule :: Bool -> FilePath -> String -> FilePath -> Maybe String -> String -> DBCacheInitialiser -> Rules ()
+mkRunRule normalRun runFileDirectory databaseGroupId workingDirectory servername dbname initialiaseDBCache = do
     let
+        servername' = maybe "." id servername
         runSuffix = intercalate "." [databaseGroupId, dbname, "run"]
         extractScriptName suffix target = drop (length (runFileDirectory) + 1 ) (take (length target - length suffix - 1) target)
-        mk_sqlcmd dbname wd script = _sqlcmd normalRun wd databaseGroupId dbname dbname script
+        mk_sqlcmd servername dbname wd script = _sqlcmd normalRun wd databaseGroupId servername dbname dbname script
         
     ("**/*." ++ runSuffix) %> \out -> do
         let scriptName = extractScriptName runSuffix out
         exists <- doesFileExist out
         if exists
           then do
-            putNormal $ concat ["SKIPPING: workingDirectory: ", workingDirectory, " ", "dbname: ", dbname, " ", "dbdefinename: ", dbname, " ", "scriptName: ", scriptName]
+            putNormal $ concat ["SKIPPING: workingDirectory: ", workingDirectory, " ", "servername: ", servername', " ", "dbname: ", dbname, " ", "dbdefinename: ", dbname, " ", "scriptName: ", scriptName]
             touch out
           else do
-            mk_sqlcmd dbname workingDirectory scriptName
-            ok <- (scriptExecuted initialiaseDBCache) normalRun databaseGroupId scriptName dbname
+            mk_sqlcmd servername dbname workingDirectory scriptName
+            ok <- (scriptExecuted initialiaseDBCache) normalRun databaseGroupId scriptName servername dbname
             if ok then touch out else return ()
         
 mkIncrementalDatabaseGroups :: [String] -> ProfileDefineList -> RawIncrementalDatabaseGroup -> IncrementalDatabaseGroup
-mkIncrementalDatabaseGroups profileList profileDefines (pid, databaseGroupId, workingDirectory', dbname', scripts') =
+mkIncrementalDatabaseGroups profileList profileDefines (pid, databaseGroupId, workingDirectory', servername', dbname', scripts') =
     let
         applyProfileDefines' = applyProfileDefines profileDefines
         workingDirectory = applyProfileDefines' workingDirectory'
         dbname = applyProfileDefines' dbname'
+        servername = fmap applyProfileDefines' servername'
         scripts = map (\(scriptname') -> IncrementalDatabaseGroupScript (applyProfileDefines' scriptname') ) scripts'
     
-    in IncrementalDatabaseGroup pid databaseGroupId workingDirectory dbname scripts
+    in IncrementalDatabaseGroup pid databaseGroupId workingDirectory servername dbname scripts
 
 -- CloneProjects ----------------------
 
@@ -526,13 +535,15 @@ sed srcFile destFile replaceString withString = do
         updatedText = BSS.replace (BS8.pack replaceString) (BS8.pack withString) f
     BSL.writeFile destFile updatedText
 
-_sqlcmd :: Bool -> FilePath -> String -> String -> String -> String -> Action ()
-_sqlcmd normalRun wd databaseGroupId dbname dbdefinename scriptname = do
-    let header title = putNormal $ title ++ intercalate ", " ["id: "++databaseGroupId, "wd: "++wd, "dbname: "++dbname, "dbdefinename: "++dbdefinename, "scriptname: "++scriptname]
+_sqlcmd :: Bool -> FilePath -> String -> Maybe String -> String -> String -> String -> Action ()
+_sqlcmd normalRun wd databaseGroupId servername' dbname dbdefinename scriptname = do
+    let
+        servername = maybe "." id servername'
+        header title = putNormal $ title ++ intercalate ", " ["id: "++databaseGroupId, "wd: "++wd, "servername: "++servername, "dbname: "++dbname, "dbdefinename: "++dbdefinename, "scriptname: "++scriptname]
     if normalRun
       then do
         header "Executing sqlcmd: "
-        command_ [Cwd wd, Shell] "sqlcmd" ["-S", ".", "-b", "-d", dbname, "-v", "DatabaseName="++dbdefinename, "-i", scriptname]
+        command_ [Cwd wd, Shell] "sqlcmd" ["-S", servername, "-b", "-d", dbname, "-v", "DatabaseName="++dbdefinename, "-i", scriptname]
       else header "skipping sqlcmd: "
 
 touch' :: FilePath -> IO ()

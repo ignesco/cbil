@@ -80,7 +80,7 @@
     <IncrementalDatabaseGroups>
       <databaseGroup id="incjr_allcp" profileid="prof1">
         <workingDirectory>%WorkingDirectory%</workingDirectory>
-        <databaseInfo dbname="%DatabaseName%" />
+        <databaseInfo dbname="%DatabaseName%" servername="." />
         <scripts>
             <script>mainline/LocalAC.sql</script>
             <script>mainline/CP_0001.sql</script>
@@ -97,6 +97,7 @@
     <DatabaseGroups>
       <databaseGroup id="db" profileid="profdb">
         <workingDirectory>%WorkingDirectory%</workingDirectory>
+        <serverName>.</serverName>
         <scripts>
             <script dname="master" dbdefinename="%DatabaseName%">DropDB.sql</script>
             <script dname="master" dbdefinename="%DatabaseName%">RestoreBaseline.sql</script>
