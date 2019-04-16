@@ -36,7 +36,7 @@ import Text.XML.HXT.Arrow.ReadDocument
 import Text.XML.HXT.Core
 import Text.XML.HXT.DOM.FormatXmlTree
 
-cbilVersion = "v1.5"
+cbilVersion = "v1.5c"
     
 documentRoot :: String -> IOSLA (XIOState s) a XmlTree
 documentRoot xml = readDocument [] xml >>> getChildren >>> hasName "cbil"
@@ -259,7 +259,7 @@ mkIncrementalDatabaseGroupRule normalRun initialiaseDBCache (IncrementalDatabase
 
             deleteDirectory runFileDirectory
             need [dbcache]
-            need $ reverse needs'
+            mapM_ (need . (:[]))  needs'
 
     mkDbCacheRule dbcache runFileDirectory databaseGroupId dbname initialiaseDBCache
     mkRunRule normalRun runFileDirectory databaseGroupId workingDirectory dbname initialiaseDBCache
@@ -371,7 +371,7 @@ mkNeedsRule :: Bool -> NeedsList -> Rules ()
 mkNeedsRule normalRun (pid, _, nl') = do
         phony pid $ do
             putNormal $ "NeedsList: " ++ intercalate ", " nl'
-            need (reverse nl')
+            mapM_ (need . (:[])) nl'
 
 mkNeedsRules :: CbilConfiguration -> [NeedsList] -> Rules CbilRulesInfo
 mkNeedsRules config nl' = do
