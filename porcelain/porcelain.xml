@@ -1,0 +1,38 @@
+<cbilporcelain>R
+  <!--
+      root
+      | - - - -    Template
+                    |- - - -  Group
+                                | - - - -  cbil.local.xml
+                    |- - - -  Sub
+                                | - - - -  cbil.local.xml
+  -->
+  
+    <Defines>X1
+        <define name="d1">D1</define>
+        <define name="d2">D2</define>
+    </Defines>
+    
+    <Defines2>
+        <define name="e1">E1</define>
+        <define name="e2">E2</define>
+    </Defines2>
+    
+    <Template>
+        <Group>
+            <sourceDirectory>Template/ID/Current</sourceDirectory>
+            <destinationDirectory>LocalWork/%GROUP_ID%/Current</destinationDirectory>
+            <files>
+                <file>cbil.local.xml</file>
+            </files>
+        </Group>
+        
+        <Sub>
+            <sourceDirectory>Template/SUB/Current</sourceDirectory>
+            <destinationDirectory>LocalWork/%SUB_ID%/Current</destinationDirectory>
+            <files>
+                <file>cbil.local.xml</file>
+            </files>
+        </Sub>
+        </Template>
+</cbilporcelain>

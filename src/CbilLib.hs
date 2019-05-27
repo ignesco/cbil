@@ -17,6 +17,8 @@ module CbilLib
 )
 where
 
+import CbilLib.Utils
+
 import Development.Shake
 import Data.Char
 import Data.List
@@ -25,8 +27,6 @@ import Data.Maybe
 import qualified Data.ByteString.Search as BSS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL
-import qualified Data.ByteString as BS
-import qualified Data.Set as DS
 
 import System.Console.GetOpt
 import qualified System.Directory as SD
@@ -76,7 +76,7 @@ loadProfileDefines xmlFile = do
     return $ concat $ map (runLA mapToCbilProfileDefines) trees
 
 mapToCbilProfileDefines :: ArrowXml t => t XmlTree ProfileDefine
-mapToCbilProfileDefines = let 
+mapToCbilProfileDefines = let
         defineNamesSelector = getAttrValue "name"
         defineValuesSelector = getChildren >>> getText
         kvPairTuplesSelector = defineNamesSelector &&& defineValuesSelector >>> arr2 (,)
@@ -527,7 +527,8 @@ mkNetTiersGroup profileList profileDefines (netTiersGroupId, pid, netTiersPath',
         nettiersdir = applyProfileDefines' nettiersdir'
     in NetTiersGroup netTiersGroupId pid netTiersPath nettiersTemplateLocation templatedb db nettiersdir
         
--- Extra helper function for general use ------------
+{-
+        -- Extra helper function for general use ------------
 sed :: FilePath -> FilePath -> String -> String -> IO ()
 sed srcFile destFile replaceString withString = do
     f <- BS.readFile srcFile
@@ -556,7 +557,7 @@ touch fp = do
     liftIO $ touch' fp
 
 -- Helper function END --
-
+--}
 -- Cbil Help ---------------
 data Flags = ProfileOpt String | AltSettingsOpt String | RunFlag RunType | ShowHiddenRules | ExtraSettingsOpt String deriving (Eq)
 
