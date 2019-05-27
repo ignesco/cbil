@@ -1,4 +1,4 @@
-<cbilporcelain>R
+<cbilporcelain>
   <!--
       root
       | - - - -    Template
@@ -8,7 +8,7 @@
                                 | - - - -  cbil.local.xml
   -->
   
-    <Defines>X1
+    <Defines>
         <define name="d1">D1</define>
         <define name="d2">D2</define>
     </Defines>
@@ -22,6 +22,7 @@
         <Group>
             <sourceDirectory>Template/ID/Current</sourceDirectory>
             <destinationDirectory>LocalWork/%GROUP_ID%/Current</destinationDirectory>
+            <cbilSettingsFile>LocalWork/%SUB_ID%/Current/cbil.local.xml</cbilSettingsFile>
             <files>
                 <file>cbil.local.xml</file>
             </files>
