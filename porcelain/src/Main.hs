@@ -23,10 +23,10 @@ import System.FilePath
 import System.IO
 
 type Defines = [(String, String)]
-type RawPorcelainSettings = [[  ( [Defines], String, String, String, [[String]] , String, String, [[String]] )  ]]
+type RawPorcelainSettings = [[  ( [Defines], String, String, String, String, [[String]] , String, String, [[String]] )  ]]
 data PorcelainSettings = PorcelainSettings {
         defines :: Defines
-        , groupTemplate :: (FilePath, FilePath, FilePath, [FilePath])
+        , groupTemplate :: (FilePath, FilePath, FilePath, String, [FilePath])
         , subTemplate :: (FilePath, FilePath, [FilePath])
     } deriving (Show)
 
@@ -44,6 +44,7 @@ mapSettingsXml = let
         sourceDirectory r =         r >>> hasName "sourceDirectory" >>> getChildren >>> getText
         destinationDirectory r =    r >>> hasName "destinationDirectory" >>> getChildren >>> getText
         groupCbilTemplate r =       r >>> hasName "cbilSettingsFile" >>> getChildren >>> getText
+        groupCbilDbNeedTemplate r = r >>> hasName "cbilDbNeed" >>> getChildren >>> getText
         fileList r =                r >>> hasName "files" >>> getChildren >>> listA (hasName "file" >>> getChildren >>> getText )
 
     in proc tree -> do
@@ -52,18 +53,19 @@ mapSettingsXml = let
         gsd <- sourceDirectory group -< tree
         gdd <- destinationDirectory group -< tree
         gct <- groupCbilTemplate group -< tree
+        gcdn <- groupCbilDbNeedTemplate group -< tree
         gfiles <- listA (fileList group) -< tree
         
         ssd <- sourceDirectory sub -< tree
         sdd <- destinationDirectory sub -< tree
         sfiles <- listA (fileList sub) -< tree
 
-        returnA -< (defines' , gsd, gdd, gct, gfiles, ssd, sdd, sfiles)
+        returnA -< (defines' , gsd, gdd, gct, gcdn, gfiles, ssd, sdd, sfiles)
         
 getSettings :: RawPorcelainSettings -> PorcelainSettings
 getSettings raw = let
-        (d, gsd, gdd, gct, gf, ssd, sdd, sf) = head $ concat raw
-    in PorcelainSettings (concat d) (gsd, gdd, gct, concat gf) (ssd, sdd, concat sf)
+        (d, gsd, gdd, gct, gcdn, gf, ssd, sdd, sf) = head $ concat raw
+    in PorcelainSettings (concat d) (gsd, gdd, gct, gcdn, concat gf) (ssd, sdd, concat sf)
 
 documentRoot :: String -> IOSLA (XIOState s) a XmlTree
 documentRoot xml =  readDocument [withTrace (-1)] xml
@@ -111,30 +113,32 @@ applyDefines d s = foldr (\(k, v) a -> replaceString k v a) s d
         replaceString sString dString str = map (chr . fromEnum) $ BSL.unpack $ BSS.replace (BS8.pack sString) (BS8.pack dString) (BS8.pack str)
         
 applyGroupDefines :: Maybe String -> PorcelainSettings -> PorcelainSettings
-applyGroupDefines gid (PorcelainSettings defs' (gsd', gdd', cs, gf') (ssd, sdd, sf)) = let
+applyGroupDefines gid (PorcelainSettings defs' (gsd', gdd', cs, cn, gf') (ssd, sdd, sf)) = let
         defs = maybe defs' (\id -> ("%GROUP_ID%", id):defs') gid
         
         gsd = applyDefines defs gsd'
         gdd = applyDefines defs gdd'
         gf = map (applyDefines defs) gf'
-    in PorcelainSettings defs (gsd, gdd, cs, gf) (ssd, sdd, sf)
+    in PorcelainSettings defs (gsd, gdd, cs, cn, gf) (ssd, sdd, sf)
 
 applySubDefines :: String -> PorcelainSettings -> PorcelainSettings
-applySubDefines sid (PorcelainSettings defs' (gsd, gdd, cs, gf) (ssd', sdd', sf')) = let
+applySubDefines sid (PorcelainSettings defs' (gsd, gdd, cs, cn, gf) (ssd', sdd', sf')) = let
         defs = (("%SUB_ID%", sid):defs')
         
         ssd = applyDefines defs ssd'
         sdd = applyDefines defs sdd'
         sf = map (applyDefines defs) sf'
-    in PorcelainSettings defs (gsd, gdd, cs, gf) (ssd, sdd, sf)
+    in PorcelainSettings defs (gsd, gdd, cs, cn, gf) (ssd, sdd, sf)
 
 
 addManifestDefines :: PorcelainManifest -> PorcelainSettings -> PorcelainSettings
 addManifestDefines (PorcelainManifest subs) settings = let
-        (_, _, cbilFileTemplate, _) = groupTemplate settings
+        (_, _, cbilFileTemplate, cbilDbNeedsTemplate, _) = groupTemplate settings
         profiles = concat $ map (\s -> concat ["<profile>", s, "</profile>"]) subs
         subfiles = concat $ map (\s -> concat ["<extraSettingsFile>", applyDefines (("%SUB_ID%", s):defines settings) cbilFileTemplate, "</extraSettingsFile>"]) subs
-    in settings {defines = ( ("%SUB_PROFILES%", profiles):("%SUB_FILES%", subfiles):defines settings)  }
+        dbNeeds  = concat $ map (\s -> concat ["<need>", applyDefines (("%SUB_ID%", s):defines settings) cbilDbNeedsTemplate, "</need>"]) subs
+
+    in settings {defines = ( ("%SUB_PROFILES%", profiles):("%SUB_FILES%", subfiles):("%SUB_DBNEED%", dbNeeds):defines settings)  }
 
 data PorcelainManifest = PorcelainManifest [String] deriving (Show)
 
@@ -159,11 +163,11 @@ loadManifest' xmlFile = do
     return $ getManifest raw
 
 getManifestFile :: PorcelainSettings -> FilePath
-getManifestFile po = let (_, dir, _, _) = groupTemplate po in dir </> "manifest.xml"
+getManifestFile settings = let (_, dir, _, _, _) = groupTemplate settings in dir </> "manifest.xml"
 
 loadManifest :: PorcelainSettings -> IO PorcelainManifest
-loadManifest po = let
-        manifestFile = getManifestFile po
+loadManifest settings = let
+        manifestFile = getManifestFile settings
     in do
         exists <- doesFileExist manifestFile
         if exists then loadManifest' manifestFile
@@ -233,7 +237,7 @@ executeGroupUpdateNew mode po settings'' manifest groupid@(Just gid) = do
     let
         settings' = applyGroupDefines groupid settings''
         settings = addManifestDefines manifest settings'
-        (gsd, gdd, _, gf) = groupTemplate settings
+        (gsd, gdd, _, _, gf) = groupTemplate settings
         action = if mode then "Create new" else "Update"
         defines' = defines settings
         
@@ -243,13 +247,20 @@ executeGroupUpdateNew mode po settings'' manifest groupid@(Just gid) = do
     
     return Nothing
 
-execute :: PorcelainOptions -> PorcelainSettings -> PorcelainManifest -> ExecuteResult
-execute po settings'@(PorcelainSettings d' g s) manifest = let
-        d = map (\(k, v) -> (concat ["%", k, "%"], v) ) d'
-        settings = PorcelainSettings d g s
+execute :: PorcelainOptions -> PorcelainSettings -> ExecuteResult
+execute po settings'' = let
+        d = map (\(k, v) -> (concat ["%", k, "%"], v) ) (defines settings'')
+        settings' = settings'' { defines = d }
     in case n po of
-        ["group", "new", groupid] -> executeGroupUpdateNew True po settings manifest (Just groupid)
-        ["sub", "new", subid] -> executeSubNew po settings manifest subid
+        ["group", "new", groupid] -> do
+            let settings = applyGroupDefines (Just groupid) settings'
+            manifest <- loadManifest settings
+            executeGroupUpdateNew True po settings manifest (Just groupid)
+        
+        ["sub", "new", subid] -> do
+            let settings = applyGroupDefines (groupName po) settings'
+            manifest <- loadManifest settings
+            executeSubNew po settings manifest subid
         otherwise -> return $ Just ["ERROR"]
 
 main' :: Either [String] PorcelainOptions -> IO ()
@@ -261,11 +272,8 @@ main' opts = do
     case opts of
         Right (PorcelainOptions _ _ _ [Help]) -> usage []
         Right po@(PorcelainOptions gid settingsFile _ _) -> do
-            settings' <- loadSettings settingsFile
-            let
-                settings = applyGroupDefines gid settings'
-            manifest <- loadManifest settings
-            res <- execute po settings manifest
+            settings <- loadSettings settingsFile
+            res <- execute po settings
 
             case res  of
                 Nothing -> return ()

@@ -23,6 +23,7 @@
             <sourceDirectory>Template/ID/Current</sourceDirectory>
             <destinationDirectory>LocalWork/%GROUP_ID%/Current</destinationDirectory>
             <cbilSettingsFile>LocalWork/%SUB_ID%/Current/cbil.local.xml</cbilSettingsFile>
+            <cbilDbNeed>_db_%SUB_ID%</cbilDbNeed>
             <files>
                 <file>cbil.local.xml</file>
             </files>
