@@ -15,17 +15,26 @@ import qualified Data.ByteString.Lazy as BSL
 
 import Data.Char
 import Data.List
+import Data.Maybe
 import System.Console.GetOpt
 import System.Directory
 import System.Environment
 import System.Exit
 import System.FilePath
 import System.IO
+import System.Process
 
 type Defines = [(String, String)]
-type RawPorcelainSettings = [[  ( [Defines], String, String, String, String, [[String]] , String, String, [[String]] )  ]]
+data CbSettings = CbSettings {
+        cbSettings :: Maybe FilePath
+        , cbProfile :: Maybe String
+        , cbExtraSettings :: Maybe String
+    } deriving (Show)
+
+type RawPorcelainSettings = [[ ( [Defines], [String], [String], [String], String, String, String, String, [[String]] , String, String, [[String]] )  ]]
 data PorcelainSettings = PorcelainSettings {
         defines :: Defines
+        , cSettings :: CbSettings
         , groupTemplate :: (FilePath, FilePath, FilePath, String, [FilePath])
         , subTemplate :: (FilePath, FilePath, [FilePath])
     } deriving (Show)
@@ -36,6 +45,10 @@ mapSettingsXml = let
         dk = hasName "define" >>> getAttrValue "name"
         dv = hasName "define" >>> getChildren >>> getText
         defines = root >>> hasName "Defines" >>> getChildren >>> listA (dk &&& dv >>> arr2 (,))
+
+        cSettings = root >>> hasName "CbilDefaults" >>> getChildren >>> hasName "settings" >>> getChildren >>> getText
+        cProfile = root >>> hasName "CbilDefaults" >>> getChildren >>> hasName "profile" >>> getChildren >>> getText
+        cExtraSettings = root >>> hasName "CbilDefaults" >>> getChildren >>> hasName "extraSettings" >>> getChildren >>> getText
 
         files sel = root >>> hasName "Template"  >>> getChildren >>> hasName sel >>> getChildren
         group = files "Group"
@@ -49,6 +62,9 @@ mapSettingsXml = let
 
     in proc tree -> do
         defines' <- listA defines -< tree
+        c1 <- listA cSettings -< tree
+        c2 <- listA cProfile -< tree
+        c3 <- listA cExtraSettings -< tree
 
         gsd <- sourceDirectory group -< tree
         gdd <- destinationDirectory group -< tree
@@ -60,12 +76,12 @@ mapSettingsXml = let
         sdd <- destinationDirectory sub -< tree
         sfiles <- listA (fileList sub) -< tree
 
-        returnA -< (defines' , gsd, gdd, gct, gcdn, gfiles, ssd, sdd, sfiles)
+        returnA -< (defines', c1, c2, c3 , gsd, gdd, gct, gcdn, gfiles, ssd, sdd, sfiles)
         
 getSettings :: RawPorcelainSettings -> PorcelainSettings
 getSettings raw = let
-        (d, gsd, gdd, gct, gcdn, gf, ssd, sdd, sf) = head $ concat raw
-    in PorcelainSettings (concat d) (gsd, gdd, gct, gcdn, concat gf) (ssd, sdd, concat sf)
+        (d, c1, c2, c3, gsd, gdd, gct, gcdn, gf, ssd, sdd, sf) = head $ concat raw
+    in PorcelainSettings (concat d) (CbSettings ((listToMaybe ) c1) ((listToMaybe ) c2) ((listToMaybe ) c3)) (gsd, gdd, gct, gcdn, concat gf) (ssd, sdd, concat sf)
 
 documentRoot :: String -> IOSLA (XIOState s) a XmlTree
 documentRoot xml =  readDocument [withTrace (-1)] xml
@@ -81,15 +97,23 @@ loadSettings xmlFile = do
 data PorcelainOptions = PorcelainOptions {
         groupName :: Maybe String
         , settingsFile :: String
+        , cbilSettings :: Maybe FilePath
+        , cbilProfile :: Maybe String
+        , cbilExtraSettings :: Maybe String
+        , cbilDryRun :: Bool
         , n :: [String]
         , o ::  [PorcelainOption]
     } deriving (Show)
 
-data PorcelainOption = Settings FilePath | GroupID String | Help deriving (Show, Eq)
+data PorcelainOption = Settings FilePath | GroupID String | CbilSettings String | CbilProfile String | CbilExtraSettings String | CbilDryRun | Help deriving (Show, Eq)
 
 options = [
         Option [] ["settings"] (ReqArg Settings "SETTING_FILE") "Porcelain settings file"
         , Option "g" ["groupid"] (ReqArg GroupID "GROUP_ID") "GROUP_ID"
+        , Option "s" ["cbil-settings"] (ReqArg CbilSettings "CBIL_SETTINGS_FILE") "CBIL_SETTINGS_FILE"
+        , Option "p" ["cbil-profile"] (ReqArg CbilProfile "CBIL_PROFILE") "CBIL_PROFILE"
+        , Option "e" ["cbil-extra-settings"] (ReqArg CbilExtraSettings "CBIL_EXTRA_SETTINGS") "CBIL_EXTRA_SETTINGS"
+        , Option "d" ["cbil-dry-run"] (NoArg CbilDryRun) "Cbil Dry run"
         , Option "h" ["help"] (NoArg Help) "Show help"
     ]
 
@@ -102,9 +126,29 @@ getOptions args = let
             GroupID s -> Just s
             otherwise -> getGroupID os
 
+        getCbilSettings [] = Nothing
+        getCbilSettings (o:os) = case o of
+            CbilSettings s -> Just s
+            otherwise -> getCbilSettings os
+        
+        getCbilProfile [] = Nothing
+        getCbilProfile (o:os) = case o of
+            CbilProfile s -> Just s
+            otherwise -> getCbilProfile os
+        
+        getCbilExtraSettings [] = Nothing
+        getCbilExtraSettings (o:os) = case o of
+            CbilExtraSettings s -> Just s
+            otherwise -> getCbilExtraSettings os
+        
+        getCbilDryRun [] = False
+        getCbilDryRun (o:os) = case o of
+            CbilDryRun -> True
+            otherwise -> getCbilDryRun os
+
         (o, n, e) = getOpt Permute options args
         in case e of
-            [] -> Right (PorcelainOptions (getGroupID o) sf n o)
+            [] -> Right (PorcelainOptions (getGroupID o) sf (getCbilSettings o) (getCbilProfile o) (getCbilExtraSettings o) (getCbilDryRun o) n o)
             otherwise -> Left e
 
 applyDefines :: Defines -> String -> String
@@ -113,23 +157,22 @@ applyDefines d s = foldr (\(k, v) a -> replaceString k v a) s d
         replaceString sString dString str = map (chr . fromEnum) $ BSL.unpack $ BSS.replace (BS8.pack sString) (BS8.pack dString) (BS8.pack str)
         
 applyGroupDefines :: Maybe String -> PorcelainSettings -> PorcelainSettings
-applyGroupDefines gid (PorcelainSettings defs' (gsd', gdd', cs, cn, gf') (ssd, sdd, sf)) = let
+applyGroupDefines gid (PorcelainSettings defs' cbopts (gsd', gdd', cs, cn, gf') (ssd, sdd, sf)) = let
         defs = maybe defs' (\id -> ("%GROUP_ID%", id):defs') gid
         
         gsd = applyDefines defs gsd'
         gdd = applyDefines defs gdd'
         gf = map (applyDefines defs) gf'
-    in PorcelainSettings defs (gsd, gdd, cs, cn, gf) (ssd, sdd, sf)
+    in PorcelainSettings defs cbopts (gsd, gdd, cs, cn, gf) (ssd, sdd, sf)
 
 applySubDefines :: String -> PorcelainSettings -> PorcelainSettings
-applySubDefines sid (PorcelainSettings defs' (gsd, gdd, cs, cn, gf) (ssd', sdd', sf')) = let
+applySubDefines sid (PorcelainSettings defs' cbopts (gsd, gdd, cs, cn, gf) (ssd', sdd', sf')) = let
         defs = (("%SUB_ID%", sid):defs')
         
         ssd = applyDefines defs ssd'
         sdd = applyDefines defs sdd'
         sf = map (applyDefines defs) sf'
-    in PorcelainSettings defs (gsd, gdd, cs, cn, gf) (ssd, sdd, sf)
-
+    in PorcelainSettings defs cbopts (gsd, gdd, cs, cn, gf) (ssd, sdd, sf)
 
 addManifestDefines :: PorcelainManifest -> PorcelainSettings -> PorcelainSettings
 addManifestDefines (PorcelainManifest subs) settings = let
@@ -208,7 +251,29 @@ copyTemplate defs sd dd f = do
 
 manifestAddSub :: PorcelainManifest -> String -> PorcelainManifest
 manifestAddSub m@(PorcelainManifest subs) subid = if subid `elem` subs then m else PorcelainManifest $ concat [subs, [subid]]
-        
+
+executeCbil :: PorcelainOptions -> PorcelainSettings -> [String] -> ExecuteResult
+executeCbil po settings targets = do
+    let
+        s = cSettings settings
+
+    let
+        _finalSettings = sequence $ filter isJust [cbSettings s, cbilSettings po]
+        _finalProfile = sequence $ filter isJust [cbProfile s, cbilProfile po]
+        _finalExtraSettings = sequence $ filter isJust [cbExtraSettings s, cbilExtraSettings po]
+
+        addFlag s m = if length m == 0 then Nothing else (Just . concat) (s:[intercalate "," m])
+
+        _params = sequence $ filter isJust $ case (_finalSettings, _finalProfile, _finalExtraSettings) of
+            (Just finalSettings, Just finalProfile, Just finalExtraSettings) -> [if cbilDryRun po then (Just "--dry-run") else Nothing, addFlag "--settings=" finalSettings, addFlag "--profile=" finalProfile, addFlag "--extra-settings=" finalExtraSettings]
+                    
+    case _params of
+        Just params -> do
+            let allParams = params ++ targets
+            putStrLn $ "Running cbil with params: " ++ intercalate " " allParams
+            callProcess "cbil" allParams >> return Nothing
+        Nothing -> return $ Just ["should not get here [1]"]
+
 executeSubNew :: PorcelainOptions -> PorcelainSettings -> PorcelainManifest -> String -> ExecuteResult
 executeSubNew po settings'' manifest' subid = do
     let
@@ -261,17 +326,20 @@ execute po settings'' = let
             let settings = applyGroupDefines (groupName po) settings'
             manifest <- loadManifest settings
             executeSubNew po settings manifest subid
+        
+        ("build":targets) -> do
+            executeCbil po settings' targets
         otherwise -> return $ Just ["ERROR"]
 
 main' :: Either [String] PorcelainOptions -> IO ()
 main' opts = do
     let
-        header = " Usage: XXXXX [OPTION...] group new GID / sub new SID"
+        header = " Usage: XXXXX [OPTION...] group new GID / sub new SID / build TARGETS"
         usage [] = getProgName >>= (\prg -> hPutStrLn stderr (usageInfo prg options))
         usage errs = ioError (userError (concat errs ++ usageInfo header options))
     case opts of
-        Right (PorcelainOptions _ _ _ [Help]) -> usage []
-        Right po@(PorcelainOptions gid settingsFile _ _) -> do
+        Right (PorcelainOptions _ _ _ _ _ _ _ [Help]) -> usage []
+        Right po@(PorcelainOptions gid settingsFile _ _ _ _ _ _) -> do
             settings <- loadSettings settingsFile
             res <- execute po settings
 

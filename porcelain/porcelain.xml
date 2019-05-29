@@ -7,7 +7,12 @@
                     |- - - -  Sub
                                 | - - - -  cbil.local.xml
   -->
-  
+    <CbilDefaults>
+        <settings>abc,def</settings>
+        <profile>ghi,jki</profile>
+        <extraSettings>set1,set2</extraSettings>
+    </CbilDefaults>
+
     <Defines>
         <define name="d1">D1</define>
         <define name="d2">D2</define>
