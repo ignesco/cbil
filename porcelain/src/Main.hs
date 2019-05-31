@@ -252,27 +252,42 @@ copyTemplate defs sd dd f = do
 manifestAddSub :: PorcelainManifest -> String -> PorcelainManifest
 manifestAddSub m@(PorcelainManifest subs) subid = if subid `elem` subs then m else PorcelainManifest $ concat [subs, [subid]]
 
-executeCbil :: PorcelainOptions -> PorcelainSettings -> [String] -> ExecuteResult
-executeCbil po settings targets = do
-    let
+buildCbilParams po settings subid subsettings = let
         s = cSettings settings
-
-    let
         _finalSettings = sequence $ filter isJust [cbSettings s, cbilSettings po]
-        _finalProfile = sequence $ filter isJust [cbProfile s, cbilProfile po]
-        _finalExtraSettings = sequence $ filter isJust [cbExtraSettings s, cbilExtraSettings po]
+        _finalProfile = sequence $ filter isJust [cbProfile s, cbilProfile po, subid]
+        _finalExtraSettings = sequence $ filter isJust [cbExtraSettings s, cbilExtraSettings po, subsettings]
 
         addFlag s m = if length m == 0 then Nothing else (Just . concat) (s:[intercalate "," m])
 
-        _params = sequence $ filter isJust $ case (_finalSettings, _finalProfile, _finalExtraSettings) of
+    in sequence $ filter isJust $ case (_finalSettings, _finalProfile, _finalExtraSettings) of
             (Just finalSettings, Just finalProfile, Just finalExtraSettings) -> [if cbilDryRun po then (Just "--dry-run") else Nothing, addFlag "--settings=" finalSettings, addFlag "--profile=" finalProfile, addFlag "--extra-settings=" finalExtraSettings]
+
+_executeCbil :: PorcelainOptions -> PorcelainSettings -> Maybe String -> Maybe String -> [String] -> ExecuteResult
+_executeCbil po settings subid subsettings targets = do
+    let
+        _params = buildCbilParams po settings subid subsettings
                     
     case _params of
         Just params -> do
             let allParams = params ++ targets
             putStrLn $ "Running cbil with params: " ++ intercalate " " allParams
-            callProcess "cbil" allParams >> return Nothing
+            callProcess "cbil" allParams
+            return Nothing
         Nothing -> return $ Just ["should not get here [1]"]
+
+executeCbil :: PorcelainOptions -> PorcelainSettings -> [String] -> ExecuteResult
+executeCbil po settings targets = _executeCbil po settings Nothing Nothing targets
+
+executeGroupCbil :: PorcelainOptions -> PorcelainSettings -> String -> [String] -> ExecuteResult
+executeGroupCbil po settings subid targets = let
+        
+        defs' = defines settings
+        defs = ("%SUB_ID%", subid):defs'
+        (_, _, cbilxml', _, _) = groupTemplate settings
+        cbilxml = applyDefines defs cbilxml'
+        
+    in _executeCbil po settings (Just subid) (Just cbilxml) targets
 
 executeSubNew :: PorcelainOptions -> PorcelainSettings -> PorcelainManifest -> String -> ExecuteResult
 executeSubNew po settings'' manifest' subid = do
@@ -329,12 +344,15 @@ execute po settings'' = let
         
         ("build":targets) -> do
             executeCbil po settings' targets
+        
+        ("groupbuild":id:targets) -> do
+            executeGroupCbil po settings' id targets
         otherwise -> return $ Just ["ERROR"]
 
 main' :: Either [String] PorcelainOptions -> IO ()
 main' opts = do
     let
-        header = " Usage: XXXXX [OPTION...] group new GID / sub new SID / build TARGETS"
+        header = " Usage: XXXXX [OPTION...] group new GID / sub new SID / build TARGETS / groupbuild ID targets"
         usage [] = getProgName >>= (\prg -> hPutStrLn stderr (usageInfo prg options))
         usage errs = ioError (userError (concat errs ++ usageInfo header options))
     case opts of
