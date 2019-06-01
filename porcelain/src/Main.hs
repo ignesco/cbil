@@ -97,6 +97,7 @@ loadSettings xmlFile = do
 data PorcelainOptions = PorcelainOptions {
         groupName :: Maybe String
         , settingsFile :: String
+        , dryRun :: Bool
         , cbilSettings :: Maybe FilePath
         , cbilProfile :: Maybe String
         , cbilExtraSettings :: Maybe String
@@ -105,11 +106,12 @@ data PorcelainOptions = PorcelainOptions {
         , o ::  [PorcelainOption]
     } deriving (Show)
 
-data PorcelainOption = Settings FilePath | GroupID String | CbilSettings String | CbilProfile String | CbilExtraSettings String | CbilDryRun | Help deriving (Show, Eq)
+data PorcelainOption = Settings FilePath | GroupID String | DryRun | CbilSettings String | CbilProfile String | CbilExtraSettings String | CbilDryRun | Help deriving (Show, Eq)
 
 options = [
         Option [] ["settings"] (ReqArg Settings "SETTING_FILE") "Porcelain settings file"
         , Option "g" ["groupid"] (ReqArg GroupID "GROUP_ID") "GROUP_ID"
+        , Option []  ["dry-run"] (NoArg DryRun) "Dry run for cbilPorcelain"
         , Option "s" ["cbil-settings"] (ReqArg CbilSettings "CBIL_SETTINGS_FILE") "CBIL_SETTINGS_FILE"
         , Option "p" ["cbil-profile"] (ReqArg CbilProfile "CBIL_PROFILE") "CBIL_PROFILE"
         , Option "e" ["cbil-extra-settings"] (ReqArg CbilExtraSettings "CBIL_EXTRA_SETTINGS") "CBIL_EXTRA_SETTINGS"
@@ -126,6 +128,11 @@ getOptions args = let
             GroupID s -> Just s
             otherwise -> getGroupID os
 
+        getDryRun [] = False
+        getDryRun (o:os) = case o of
+            DryRun -> True
+            otherwise -> getDryRun os
+        
         getCbilSettings [] = Nothing
         getCbilSettings (o:os) = case o of
             CbilSettings s -> Just s
@@ -148,7 +155,7 @@ getOptions args = let
 
         (o, n, e) = getOpt Permute options args
         in case e of
-            [] -> Right (PorcelainOptions (getGroupID o) sf (getCbilSettings o) (getCbilProfile o) (getCbilExtraSettings o) (getCbilDryRun o) n o)
+            [] -> Right (PorcelainOptions (getGroupID o) sf (getDryRun o) (getCbilSettings o) (getCbilProfile o) (getCbilExtraSettings o) (getCbilDryRun o) n o)
             otherwise -> Left e
 
 applyDefines :: Defines -> String -> String
@@ -220,8 +227,11 @@ saveManifest :: PorcelainSettings -> PorcelainManifest -> IO ()
 saveManifest settings (PorcelainManifest subs) = do
     let
         manifestFile = getManifestFile settings
+        manifestDir = takeDirectory manifestFile
         contents = concat $ concat [["<cbilporcelainmanifest>", "<Subs>"] , map (\s -> "<Sub>" ++ s ++ "</Sub>" ) subs, ["</Subs>", "</cbilporcelainmanifest>"] ]
     putStrLn $ "save manifest " ++ manifestFile
+
+    createDirectoryIfMissing True manifestDir
     writeFile manifestFile contents
 
 type ExecuteResult = IO (Maybe [String])
@@ -270,10 +280,11 @@ _executeCbil po settings subid subsettings targets = do
                     
     case _params of
         Just params -> do
-            let allParams = params ++ targets
+            let
+                dryRun' =  dryRun po
+                allParams = params ++ targets
             putStrLn $ "Running cbil with params: " ++ intercalate " " allParams
-            callProcess "cbil" allParams
-            return Nothing
+            if dryRun' then return Nothing else callProcess "cbil" allParams >> return Nothing
         Nothing -> return $ Just ["should not get here [1]"]
 
 executeCbil :: PorcelainOptions -> PorcelainSettings -> [String] -> ExecuteResult
@@ -291,25 +302,31 @@ executeGroupCbil po settings subid targets = let
 
 executeSubNew :: PorcelainOptions -> PorcelainSettings -> PorcelainManifest -> String -> ExecuteResult
 executeSubNew po settings'' manifest' subid = do
-    let
-        settings' = applyGroupDefines (groupName po) settings''
-        settings = applySubDefines subid settings''
-        
-        (ssd, sdd, sf) = subTemplate settings
-        
-    putStrLn $ "Create new sub:" ++ subid
-    putStrLn $ "\t Create directory: " ++ sdd
-    filesExist' <- mapM (\f -> (doesFileExist (sdd </> f)) >>= (\b -> return (b, sdd </> f))) sf
-    let filesThatExist = map snd $ filter fst filesExist'
 
-    if (length filesThatExist == 0)
-      then do
-        mapM_ (copyTemplate (defines settings) ssd sdd) sf
-        let manifest = manifestAddSub manifest' subid
-        saveManifest settings manifest
-        executeGroupUpdateNew False po settings' manifest (groupName po)
-        return Nothing
-      else return $ Just $ concat [["ERROR file(s) already exist "], [intercalate ", " filesThatExist], ["\n"]]
+    let groupName' = (groupName po)
+    case groupName' of
+        Nothing -> return $ Just ["ERROR groupid not specified"]
+        Just _ -> do
+            let
+                settings' = applyGroupDefines (groupName po) settings''
+                settings = applySubDefines subid settings''
+
+                (ssd, sdd, sf) = subTemplate settings
+
+            putStrLn $ "Create new sub:" ++ subid
+            putStrLn $ "\t Create directory: " ++ sdd
+            filesExist' <- mapM (\f -> (doesFileExist (sdd </> f)) >>= (\b -> return (b, sdd </> f))) sf
+            let filesThatExist = map snd $ filter fst filesExist'
+
+            if (length filesThatExist == 0)
+              then do
+                mapM_ (copyTemplate (defines settings) ssd sdd) sf
+                let manifest = manifestAddSub manifest' subid
+
+                saveManifest settings manifest
+                executeGroupUpdateNew False po settings' manifest (groupName po)
+                return Nothing
+              else return $ Just $ concat [["ERROR file(s) already exist "], [intercalate ", " filesThatExist], ["\n"]]
         
 executeGroupUpdateNew :: Bool -> PorcelainOptions -> PorcelainSettings -> PorcelainManifest -> Maybe String -> ExecuteResult
 executeGroupUpdateNew mode po settings manifest Nothing = return $ Just ["Group not set"]
@@ -356,8 +373,8 @@ main' opts = do
         usage [] = getProgName >>= (\prg -> hPutStrLn stderr (usageInfo prg options))
         usage errs = ioError (userError (concat errs ++ usageInfo header options))
     case opts of
-        Right (PorcelainOptions _ _ _ _ _ _ _ [Help]) -> usage []
-        Right po@(PorcelainOptions gid settingsFile _ _ _ _ _ _) -> do
+        Right (PorcelainOptions _ _ _ _ _ _ _ _ [Help]) -> usage []
+        Right po@(PorcelainOptions gid settingsFile _ _ _ _ _ _ _) -> do
             settings <- loadSettings settingsFile
             res <- execute po settings
 
