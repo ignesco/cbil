@@ -327,7 +327,32 @@ executeSubNew po settings'' manifest' subid = do
                 executeGroupUpdateNew False po settings' manifest (groupName po)
                 return Nothing
               else return $ Just $ concat [["ERROR file(s) already exist "], [intercalate ", " filesThatExist], ["\n"]]
-        
+
+executeSubExisting :: PorcelainOptions -> PorcelainSettings -> PorcelainManifest -> String -> ExecuteResult
+executeSubExisting po settings'' manifest' subid = do
+
+    let groupName' = (groupName po)
+    case groupName' of
+        Nothing -> return $ Just ["ERROR groupid not specified"]
+        Just _ -> do
+            let
+                settings' = applyGroupDefines (groupName po) settings''
+                settings = applySubDefines subid settings''
+
+                (ssd, sdd, sf) = subTemplate settings
+
+            putStrLn $ "Adding exising sub:" ++ subid
+            putStrLn $ "\t Checking directory exists: " ++ sdd
+            dirExists <- doesDirectoryExist sdd
+
+            if dirExists
+              then do
+                let manifest = manifestAddSub manifest' subid
+
+                saveManifest settings manifest
+                executeGroupUpdateNew False po settings' manifest (groupName po)
+              else return $ Just $ ["ERROR sub directory does not exist: " ++ sdd]
+                
 executeGroupUpdateNew :: Bool -> PorcelainOptions -> PorcelainSettings -> PorcelainManifest -> Maybe String -> ExecuteResult
 executeGroupUpdateNew mode po settings manifest Nothing = return $ Just ["Group not set"]
 executeGroupUpdateNew mode po settings'' manifest groupid@(Just gid) = do
@@ -358,7 +383,12 @@ execute po settings'' = let
             let settings = applyGroupDefines (groupName po) settings'
             manifest <- loadManifest settings
             executeSubNew po settings manifest subid
-        
+
+        ["sub", "existing", subid] -> do
+            let settings = applyGroupDefines (groupName po) settings'
+            manifest <- loadManifest settings
+            executeSubExisting po settings manifest subid
+
         ("build":targets) -> do
             executeCbil po settings' targets
         
@@ -369,7 +399,7 @@ execute po settings'' = let
 main' :: Either [String] PorcelainOptions -> IO ()
 main' opts = do
     let
-        header = " Usage: XXXXX [OPTION...] group new GID / sub new SID / build TARGETS / groupbuild ID targets"
+        header = " Usage: XXXXX [OPTION...] group new GID / sub new SID / sub existing SID / build TARGETS / groupbuild ID targets"
         usage [] = getProgName >>= (\prg -> hPutStrLn stderr (usageInfo prg options))
         usage errs = ioError (userError (concat errs ++ usageInfo header options))
     case opts of
