@@ -36,7 +36,7 @@ import Text.XML.HXT.Arrow.ReadDocument
 import Text.XML.HXT.Core
 import Text.XML.HXT.DOM.FormatXmlTree
 
-cbilVersion = "v1.7.0.0"
+cbilVersion = "v1.8.0.0"
     
 documentRoot :: String -> IOSLA (XIOState s) a XmlTree
 documentRoot xml = readDocument [] xml >>> getChildren >>> hasName "cbil"
@@ -512,8 +512,10 @@ mkNetTiersGroupRule normalRun (NetTiersGroup netTiersGroupId pid netTiersPath ne
                 return ()
         
     phony netTiersGroupId $ do
-        putNormal $ "Executing NetTiersGroup: " ++ intercalate ", " ["id: "++netTiersGroupId, "netTiersPath(Cwd): "++netTiersPath, "nettiersTemplateLocation: "++nettiersTemplateLocation, "templatedb: "++templatedb, "db: "++db, "nettiersdir: "++nettiersdir]
-        generateNettiers netTiersPath nettiersTemplateLocation templatedb db nettiersdir
+        canonicalnetTiersPath <- liftIO $ SD.canonicalizePath netTiersPath
+        canonical_nettiersdir <- liftIO $ SD.canonicalizePath nettiersdir
+        putNormal $ "Executing NetTiersGroup: " ++ intercalate ", " ["id: "++netTiersGroupId, "netTiersPath(Cwd): "++canonicalnetTiersPath, "nettiersTemplateLocation: "++nettiersTemplateLocation, "templatedb: "++templatedb, "db: "++db, "nettiersdir: "++canonical_nettiersdir]
+        generateNettiers canonicalnetTiersPath nettiersTemplateLocation templatedb db canonical_nettiersdir
     return netTiersGroupId
         
 mkNetTiersGroup :: [String] -> ProfileDefineList -> RawNetTiersGroup -> NetTiersGroup
@@ -528,7 +530,7 @@ mkNetTiersGroup profileList profileDefines (netTiersGroupId, pid, netTiersPath',
     in NetTiersGroup netTiersGroupId pid netTiersPath nettiersTemplateLocation templatedb db nettiersdir
         
 -- Cbil Help ---------------
-data Flags = ProfileOpt String | AltSettingsOpt String | RunFlag RunType | ShowHiddenRules | ExtraSettingsOpt String deriving (Eq)
+data Flags = ProfileOpt String | AltSettingsOpt String | RunFlag RunType | ShowHiddenRules | ExtraSettingsOpt String | ExternalSettingsOpt String deriving (Eq)
 
 flags = let
         profileBuilder :: Maybe String -> Either String Flags
@@ -542,10 +544,16 @@ flags = let
         extraSettingsFileBuilder :: Maybe String -> Either String Flags
         extraSettingsFileBuilder (Just s) = Right $ ExtraSettingsOpt s
         extraSettingsFileBuilder Nothing = Left ""
+
+        externalSettingsBuilder :: Maybe String -> Either String Flags
+        externalSettingsBuilder (Just s) = Right $ ExternalSettingsOpt s
+        externalSettingsBuilder Nothing = Left ""
+
     in [
         Option "" ["profile"] (OptArg profileBuilder "PROFILE") "Select a profile. (comma separated)"
         , Option "" ["settings"] (OptArg settingsFileBuilder "FILE") "Select an alternative setting XML file."
         , Option "" ["extra-settings"] (OptArg extraSettingsFileBuilder "EXTRAFILE") "Select extra setting XML files to load. (comma separated)"
+        , Option "" ["external-settings"] (OptArg externalSettingsBuilder "EXTERNALSETTINGS") "External setting to load. (comma separated)"
         , Option "" ["dry-run"] (NoArg $ Right $ RunFlag DryRun) "Perform a dry run build."
         , Option "" ["show-hidden-rules"] (NoArg $ Right $ ShowHiddenRules) "Show all hidden rules."
     ]

@@ -11,6 +11,7 @@
         <settings>abc,def</settings>
         <profile>ghi,jki</profile>
         <extraSettings>set1,set2</extraSettings>
+        <externalSettings>..:Scripts:CKH_%UDATE%_%GROUP_ID%_</externalSettings>
     </CbilDefaults>
 
     <Defines>
