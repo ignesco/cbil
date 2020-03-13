@@ -178,7 +178,7 @@ applyDefines d s = foldr (\(k, v) a -> replaceString k v a) s d
 applySettingsDefines :: Maybe String -> Maybe String -> PorcelainSettings -> PorcelainSettings
 applySettingsDefines gid udate (PorcelainSettings defs' cbopts' (gsd', gdd', cs, cn, gf') (ssd, sdd, sf)) = let
         defs'' = maybe defs' (\id -> ("%GROUP_ID%", id):defs') gid
-        defs = maybe defs' (\id -> ("%UDATE%", id):defs'') udate
+        defs = maybe defs'' (\id -> ("%UDATE%", id):defs'') udate
 
         gsd = applyDefines defs gsd'
         gdd = applyDefines defs gdd'
@@ -342,7 +342,7 @@ executeSubNew po settings'' manifest' subid = do
         Just _ -> do
             let
                 settings' = applySettingsDefines (groupName po) Nothing settings''
-                settings = applySubDefines subid settings''
+                settings = applySubDefines subid settings'
 
                 (ssd, sdd, sf) = subTemplate settings
 
@@ -370,7 +370,7 @@ executeSubExisting po settings'' manifest' subid = do
         Just _ -> do
             let
                 settings' = applySettingsDefines (groupName po) Nothing settings''
-                settings = applySubDefines subid settings''
+                settings = applySubDefines subid settings'
 
                 (ssd, sdd, sf) = subTemplate settings
 
